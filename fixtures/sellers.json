@@ -1,0 +1,431 @@
+{
+  "schema_version": "1.0",
+  "synthetic": true,
+  "sellers": [
+    {
+      "seller_id": "sel_rotation_kicks",
+      "display_name": "RotationKicks",
+      "persona": "rapid_rotation",
+      "currency": "USD",
+      "tone": {
+        "voice": "fast_direct",
+        "max_reply_chars": 150,
+        "emoji_mode": "light",
+        "prohibited_phrases": [
+          "last chance guaranteed",
+          "lowest price",
+          "always available"
+        ]
+      },
+      "policies": {
+        "shipping": "Orders ship by tracked standard delivery within two business days.",
+        "payment": "Payment is captured by the synthetic marketplace when a purchase is confirmed.",
+        "returns": "Unworn pairs may be returned within seven days of delivery.",
+        "price_floor": "Seller-configured floors are enforced for every rapid-rotation listing.",
+        "reply_rule": "Use short direct replies and never imply that a rotated listing is still active."
+      },
+      "products": [
+        {
+          "product_id": "prd_rotation_flash_arc",
+          "sku": "RK-FA-SO-201",
+          "brand": "Rapid Form",
+          "model_name": "Flash Arc",
+          "colorway": "Signal Orange",
+          "listing": {
+            "listing_id": "lst_rotation_flash_arc",
+            "title": "Flash Arc Signal Orange",
+            "condition": "new",
+            "condition_notes": "Factory-new and unworn.",
+            "price_cents": 13000,
+            "floor_price_cents": 11500,
+            "status": "available"
+          },
+          "variants": [
+            {
+              "variant_id": "var_rotation_flash_arc_9",
+              "label": "US M 9",
+              "available_quantity": 1
+            }
+          ],
+          "facts": {
+            "release_date": "2026-02-14",
+            "msrp_cents": 13000,
+            "materials": "Breathable mesh upper and lightweight rubber outsole",
+            "sizing": "Fits true to size",
+            "authenticity_status": "authenticated",
+            "condition": "Factory-new and unworn"
+          }
+        },
+        {
+          "product_id": "prd_rotation_relay_low",
+          "sku": "RK-RL-CT-202",
+          "brand": "Rapid Form",
+          "model_name": "Relay Low",
+          "colorway": "Cloud Teal",
+          "listing": {
+            "listing_id": "lst_rotation_relay_low",
+            "title": "Relay Low Cloud Teal",
+            "condition": "new",
+            "condition_notes": "Factory-new and unworn.",
+            "price_cents": 15000,
+            "floor_price_cents": 13000,
+            "status": "available"
+          },
+          "variants": [
+            {
+              "variant_id": "var_rotation_relay_low_8",
+              "label": "US M 8",
+              "available_quantity": 1
+            },
+            {
+              "variant_id": "var_rotation_relay_low_9",
+              "label": "US M 9",
+              "available_quantity": 1
+            },
+            {
+              "variant_id": "var_rotation_relay_low_10",
+              "label": "US M 10",
+              "available_quantity": 0
+            }
+          ],
+          "facts": {
+            "release_date": "2026-03-07",
+            "msrp_cents": 15000,
+            "materials": "Synthetic suede overlays, mesh underlay, and rubber cupsole",
+            "sizing": "Fits slightly narrow through the toe box",
+            "authenticity_status": "authenticated",
+            "condition": "Factory-new and unworn"
+          }
+        },
+        {
+          "product_id": "prd_rotation_tempo_grid",
+          "sku": "RK-TG-VC-203",
+          "brand": "Switchline",
+          "model_name": "Tempo Grid",
+          "colorway": "Volt Charcoal",
+          "listing": {
+            "listing_id": "lst_rotation_tempo_grid",
+            "title": "Tempo Grid Volt Charcoal",
+            "condition": "new",
+            "condition_notes": "Factory-new and unworn.",
+            "price_cents": 17500,
+            "floor_price_cents": 15000,
+            "status": "available"
+          },
+          "variants": [
+            {
+              "variant_id": "var_rotation_tempo_grid_10",
+              "label": "US M 10",
+              "available_quantity": 1
+            }
+          ],
+          "facts": {
+            "release_date": "2026-04-04",
+            "msrp_cents": 17500,
+            "materials": "Woven textile upper, molded cage, and carbon rubber outsole",
+            "sizing": "Fits true to size with a secure heel",
+            "authenticity_status": "authenticated",
+            "condition": "Factory-new and unworn"
+          }
+        },
+        {
+          "product_id": "prd_rotation_quick_court",
+          "sku": "RK-QC-CI-204",
+          "brand": "Switchline",
+          "model_name": "Quick Court",
+          "colorway": "Crimson Ice",
+          "listing": {
+            "listing_id": "lst_rotation_quick_court",
+            "title": "Quick Court Crimson Ice",
+            "condition": "new",
+            "condition_notes": "Factory-new and unworn.",
+            "price_cents": 14000,
+            "floor_price_cents": 12000,
+            "status": "available"
+          },
+          "variants": [
+            {
+              "variant_id": "var_rotation_quick_court_8_5",
+              "label": "US M 8.5",
+              "available_quantity": 1
+            }
+          ],
+          "facts": {
+            "release_date": "2026-05-16",
+            "msrp_cents": 14000,
+            "materials": "Synthetic leather upper and non-marking rubber outsole",
+            "sizing": "Fits true to size",
+            "authenticity_status": "authenticated",
+            "condition": "Factory-new and unworn"
+          }
+        }
+      ]
+    },
+    {
+      "seller_id": "sel_vault_consign",
+      "display_name": "VaultConsign",
+      "persona": "rare_consign",
+      "currency": "USD",
+      "tone": {
+        "voice": "precise_reserved",
+        "max_reply_chars": 220,
+        "emoji_mode": "none",
+        "prohibited_phrases": [
+          "mint condition",
+          "guaranteed investment",
+          "100% flawless"
+        ]
+      },
+      "policies": {
+        "shipping": "Rare pairs ship within three business days using tracked, signature-required delivery.",
+        "payment": "Payment is captured by the synthetic marketplace when a purchase is confirmed.",
+        "returns": "Used and consignment pairs are final sale unless the delivered condition materially differs from the listing.",
+        "price_floor": "Consignor-approved floors are enforced and are not disclosed to customers.",
+        "reply_rule": "Describe condition and authenticity only with the exact qualifiers present in current product facts."
+      },
+      "products": [
+        {
+          "product_id": "prd_vault_heritage_high",
+          "sku": "VC-HH-OC-101",
+          "brand": "Archive Form",
+          "model_name": "Heritage High 88",
+          "colorway": "Oxblood Cream",
+          "listing": {
+            "listing_id": "lst_vault_heritage_high",
+            "title": "Heritage High 88 Oxblood Cream",
+            "condition": "used",
+            "condition_notes": "Light heel drag, moderate vamp creasing, clean lining, and an aged original-style box.",
+            "price_cents": 72000,
+            "floor_price_cents": 65000,
+            "status": "available"
+          },
+          "variants": [
+            {
+              "variant_id": "var_vault_heritage_high_9",
+              "label": "US M 9",
+              "available_quantity": 1
+            }
+          ],
+          "facts": {
+            "release_date": "1988-10-08",
+            "msrp_cents": 12000,
+            "materials": "Full-grain leather upper, textile lining, and rubber cupsole",
+            "sizing": "Fits true to size with a narrow midfoot",
+            "authenticity_status": "authenticated",
+            "condition": "Light heel drag and moderate vamp creasing; no outsole separation"
+          }
+        },
+        {
+          "product_id": "prd_vault_studio_low",
+          "sku": "VC-SL-SP-102",
+          "brand": "Atelier One",
+          "model_name": "Studio Low 94",
+          "colorway": "Slate Pearl",
+          "listing": {
+            "listing_id": "lst_vault_studio_low",
+            "title": "Studio Low 94 Slate Pearl",
+            "condition": "consignment",
+            "condition_notes": "Consigned pair worn twice with faint midsole marks and no outsole separation.",
+            "price_cents": 48000,
+            "floor_price_cents": 44000,
+            "status": "available"
+          },
+          "variants": [
+            {
+              "variant_id": "var_vault_studio_low_10_5",
+              "label": "US M 10.5",
+              "available_quantity": 1
+            }
+          ],
+          "facts": {
+            "release_date": "1994-06-18",
+            "msrp_cents": 11000,
+            "materials": "Suede and mesh upper with a stitched rubber outsole",
+            "sizing": "Fits one half size large",
+            "authenticity_status": "authenticated",
+            "condition": "Worn twice with faint midsole marks and no outsole separation"
+          }
+        },
+        {
+          "product_id": "prd_vault_vector_court",
+          "sku": "VC-VC-IS-103",
+          "brand": "Meridian Works",
+          "model_name": "Vector Court Sample",
+          "colorway": "Indigo Sand",
+          "listing": {
+            "listing_id": "lst_vault_vector_court",
+            "title": "Vector Court Sample Indigo Sand",
+            "condition": "consignment",
+            "condition_notes": "Unworn consignment sample with light storage dust and no retail box.",
+            "price_cents": 95000,
+            "floor_price_cents": 90000,
+            "status": "available"
+          },
+          "variants": [
+            {
+              "variant_id": "var_vault_vector_court_8_5",
+              "label": "US M 8.5",
+              "available_quantity": 1
+            }
+          ],
+          "facts": {
+            "release_date": "2001-02-10",
+            "msrp_cents": 15000,
+            "materials": "Nubuck upper, woven tongue, and translucent rubber outsole",
+            "sizing": "Fits true to size with firm ankle padding",
+            "authenticity_status": "authenticated",
+            "condition": "Unworn sample with light storage dust and no retail box"
+          }
+        }
+      ]
+    },
+    {
+      "seller_id": "sel_velocity_kicks",
+      "display_name": "VelocityKicks",
+      "persona": "high_volume_new",
+      "currency": "USD",
+      "tone": {
+        "voice": "energetic_concise",
+        "max_reply_chars": 180,
+        "emoji_mode": "light",
+        "prohibited_phrases": [
+          "guaranteed authentic",
+          "cheapest anywhere",
+          "always in stock"
+        ]
+      },
+      "policies": {
+        "shipping": "Orders ship within two business days by tracked standard delivery.",
+        "payment": "Payment is captured by the synthetic marketplace when a purchase is confirmed.",
+        "returns": "Unworn pairs may be returned within fourteen days of delivery.",
+        "price_floor": "Seller-configured listing floors are enforced and are not disclosed to customers.",
+        "reply_rule": "Keep replies upbeat and concise, and never promise future availability."
+      },
+      "products": [
+        {
+          "product_id": "prd_velocity_aero_dash",
+          "sku": "VK-AD-RC-001",
+          "brand": "Northline Athletics",
+          "model_name": "Aero Dash",
+          "colorway": "Royal Current",
+          "listing": {
+            "listing_id": "lst_velocity_aero_dash",
+            "title": "Aero Dash Royal Current",
+            "condition": "new",
+            "condition_notes": "Factory-new and unworn.",
+            "price_cents": 16000,
+            "floor_price_cents": 14000,
+            "status": "available"
+          },
+          "variants": [
+            {
+              "variant_id": "var_velocity_aero_dash_8",
+              "label": "US M 8",
+              "available_quantity": 4
+            },
+            {
+              "variant_id": "var_velocity_aero_dash_9",
+              "label": "US M 9",
+              "available_quantity": 2
+            },
+            {
+              "variant_id": "var_velocity_aero_dash_10",
+              "label": "US M 10",
+              "available_quantity": 1
+            }
+          ],
+          "facts": {
+            "release_date": "2026-04-12",
+            "msrp_cents": 16000,
+            "materials": "Engineered mesh upper and rubber outsole",
+            "sizing": "Fits true to size",
+            "authenticity_status": "authenticated",
+            "condition": "Factory-new and unworn"
+          }
+        },
+        {
+          "product_id": "prd_velocity_court_pulse",
+          "sku": "VK-CP-SC-002",
+          "brand": "Northline Athletics",
+          "model_name": "Court Pulse",
+          "colorway": "Sunset Clay",
+          "listing": {
+            "listing_id": "lst_velocity_court_pulse",
+            "title": "Court Pulse Sunset Clay",
+            "condition": "new",
+            "condition_notes": "Factory-new and unworn.",
+            "price_cents": 14500,
+            "floor_price_cents": 12500,
+            "status": "available"
+          },
+          "variants": [
+            {
+              "variant_id": "var_velocity_court_pulse_8",
+              "label": "US M 8",
+              "available_quantity": 1
+            },
+            {
+              "variant_id": "var_velocity_court_pulse_9",
+              "label": "US M 9",
+              "available_quantity": 1
+            },
+            {
+              "variant_id": "var_velocity_court_pulse_10",
+              "label": "US M 10",
+              "available_quantity": 0
+            }
+          ],
+          "facts": {
+            "release_date": "2026-05-03",
+            "msrp_cents": 14500,
+            "materials": "Synthetic leather upper and non-marking rubber outsole",
+            "sizing": "Fits slightly narrow through the forefoot",
+            "authenticity_status": "authenticated",
+            "condition": "Factory-new and unworn"
+          }
+        },
+        {
+          "product_id": "prd_velocity_terra_shift",
+          "sku": "VK-TS-PS-003",
+          "brand": "Summit Form",
+          "model_name": "Terra Shift",
+          "colorway": "Pine Stone",
+          "listing": {
+            "listing_id": "lst_velocity_terra_shift",
+            "title": "Terra Shift Pine Stone",
+            "condition": "new",
+            "condition_notes": "Factory-new and unworn.",
+            "price_cents": 18500,
+            "floor_price_cents": 16000,
+            "status": "available"
+          },
+          "variants": [
+            {
+              "variant_id": "var_velocity_terra_shift_8",
+              "label": "US M 8",
+              "available_quantity": 2
+            },
+            {
+              "variant_id": "var_velocity_terra_shift_9",
+              "label": "US M 9",
+              "available_quantity": 1
+            },
+            {
+              "variant_id": "var_velocity_terra_shift_10",
+              "label": "US M 10",
+              "available_quantity": 1
+            }
+          ],
+          "facts": {
+            "release_date": "2026-03-21",
+            "msrp_cents": 18500,
+            "materials": "Ripstop textile upper and lugged rubber outsole",
+            "sizing": "Fits true to size with a roomy toe box",
+            "authenticity_status": "authenticated",
+            "condition": "Factory-new and unworn"
+          }
+        }
+      ]
+    }
+  ]
+}
