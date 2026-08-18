@@ -8,6 +8,8 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SELLERS_FIXTURE = REPOSITORY_ROOT / "fixtures" / "sellers.json"
+DEFAULT_CHAT_FIXTURE = REPOSITORY_ROOT / "fixtures" / "chat_messages.json"
+DEFAULT_RUNTIME_DATABASE = REPOSITORY_ROOT / "var" / "sidestage.sqlite3"
 
 
 @dataclass(frozen=True)

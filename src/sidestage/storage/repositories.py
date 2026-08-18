@@ -81,6 +81,31 @@ CREATE TABLE IF NOT EXISTS idempotency_registry (
     receipt_id TEXT NOT NULL REFERENCES operation_receipts(receipt_id),
     PRIMARY KEY (seller_id, show_id, idempotency_key)
 );
+CREATE TABLE IF NOT EXISTS chat_events (
+    event_number INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    seller_id TEXT NOT NULL REFERENCES sellers(seller_id),
+    show_id TEXT NOT NULL REFERENCES shows(show_id),
+    customer_display_name TEXT NOT NULL,
+    raw_text TEXT NOT NULL,
+    input_origin TEXT NOT NULL CHECK (input_origin IN ('prepared', 'custom')),
+    accepted_at TEXT NOT NULL,
+    show_seq INTEGER NOT NULL,
+    trace_id TEXT NOT NULL UNIQUE,
+    source_epoch_id TEXT,
+    source_listing_id TEXT,
+    UNIQUE (show_id, show_seq)
+);
+CREATE TABLE IF NOT EXISTS stream_events (
+    stream_offset INTEGER PRIMARY KEY AUTOINCREMENT,
+    seller_id TEXT NOT NULL REFERENCES sellers(seller_id),
+    show_id TEXT NOT NULL REFERENCES shows(show_id),
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS stream_events_by_show
+    ON stream_events(show_id, stream_offset);
 """
 
 

@@ -2,19 +2,24 @@
 
 SideStage is a synthetic real-time copilot prototype for sneaker live sellers. The accepted product and technical contracts are in [`docs/PRD.md`](docs/PRD.md) and [`docs/TDD.md`](docs/TDD.md).
 
-## Preview the M2 marketplace UI and debugger
+## Run the non-AI marketplace emulator
 
-Run the local review server to use the M2.1 typed-import trace:
+Install the locked development environment, then start the authoritative M2.3 server:
 
 ```bash
-uv run python -m sidestage.web.server --port 8000
+uv sync --group dev
+uv run playwright install chromium
+uv run uvicorn sidestage.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-Open [http://127.0.0.1:8000/src/sidestage/web/static/](http://127.0.0.1:8000/src/sidestage/web/static/).
+Open [http://127.0.0.1:8000/app/](http://127.0.0.1:8000/app/). The debugger ledger is at [http://127.0.0.1:8000/app/debug.html](http://127.0.0.1:8000/app/debug.html).
 
-The preview loads the approved synthetic fixtures and uses a browser-local demo adapter so the seller interactions are executable before the FastAPI/SQLite M2 kernel exists. It is not backend marketplace-safety or durability evidence. Use **Reset this seller show** to clear the active seller's local demo state.
+The browser holds only an opaque demo-session token. SQLite is authoritative for show, chat, listing, inventory, epoch, and receipt state; Server-Sent Events keep multiple projections synchronized. Copilot is intentionally off in M2.3, so running this slice makes no model call.
 
-The separate developer projection is available at [http://127.0.0.1:8000/src/sidestage/web/static/debug.html](http://127.0.0.1:8000/src/sidestage/web/static/debug.html).
-Select **Check import** there to execute the real typed catalog loader and inspect its ephemeral four-stage backend trace. The seven-stage message flow remains simulated: evidence-ready examples stop at **Agent** with `AGENT_NOT_CONNECTED`, and later steps remain skipped until the livesell reply adapter is connected.
+Run the deterministic test suite with:
 
-For projection-only review, `python3 -m http.server 8000` still serves the static UI. In that mode the import panel remains unexecuted and cannot claim backend evidence.
+```bash
+uv run pytest -q
+```
+
+The seven-stage reply trace remains explicitly simulated until the M3B livesell reply adapter is connected. Marketplace events, epochs, and receipts in the lower debugger ledger are live backend projections.

@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const STORAGE_KEY = "sidestage.m2.demo.v2";
+  const SESSION_KEY = "sidestage.m2.session";
   const TRACE_FIXTURE_URL = "/fixtures/debugger/reply_trace_scenarios.json";
   const IMPORT_TRACE_URL = "/api/debug/import-trace";
   const IMPORT_STAGE_CATALOG = [
@@ -12,12 +12,12 @@
   ];
   const dom = {};
 
-  let sellerFixture = null;
   let traceDocument = null;
   let activeScenario = null;
   let activeEvent = null;
   let activeStageNumber = 1;
   let traceHasRun = false;
+  let marketplaceEventSource = null;
 
   document.addEventListener("DOMContentLoaded", boot);
 
@@ -26,12 +26,7 @@
     bindEvents();
     initializeImportTrace();
 
-    const [sellerResult, traceResult] = await Promise.allSettled([
-      fetchJson("/fixtures/sellers.json"),
-      fetchJson(TRACE_FIXTURE_URL),
-    ]);
-
-    if (sellerResult.status === "fulfilled") sellerFixture = sellerResult.value;
+    const [traceResult] = await Promise.allSettled([fetchJson(TRACE_FIXTURE_URL)]);
 
     if (traceResult.status === "fulfilled") {
       try {
@@ -45,7 +40,8 @@
       renderTraceError(traceResult.reason);
     }
 
-    renderMarketplace();
+    await renderMarketplace();
+    connectMarketplaceEvents();
   }
 
   async function fetchJson(url, options = {}) {
@@ -137,13 +133,11 @@
   }
 
   function bindEvents() {
-    dom.refresh.addEventListener("click", renderMarketplace);
+    dom.refresh.addEventListener("click", () => renderMarketplace());
     document.querySelectorAll("[data-ledger-tab]").forEach((tab) => {
       tab.addEventListener("click", () => activateTab(tab.dataset.ledgerTab));
     });
-    window.addEventListener("storage", (event) => {
-      if (event.key === STORAGE_KEY) renderMarketplace();
-    });
+    window.addEventListener("beforeunload", () => marketplaceEventSource?.close());
 
     dom.traceScenario.addEventListener("change", () => {
       selectScenario(dom.traceScenario.value);
@@ -446,123 +440,148 @@
     dom.traceTotalDuration.textContent = "—";
   }
 
-  function readCurrentState() {
-    try {
-      const store = JSON.parse(localStorage.getItem(STORAGE_KEY));
-      if (!store?.activeSellerId || !store.shows?.[store.activeSellerId]) return null;
-      return {
-        store,
-        show: store.shows[store.activeSellerId],
-        seller: sellerFixture?.sellers?.find((item) => item.seller_id === store.activeSellerId),
-      };
-    } catch (_error) {
-      return null;
-    }
+  function sessionToken() {
+    return sessionStorage.getItem(SESSION_KEY);
   }
 
-  function renderMarketplace() {
-    const state = readCurrentState();
-    if (!state) {
-      dom.ledgerEmpty.hidden = false;
-      dom.seller.textContent = "No seller state";
-      dom.activeSku.textContent = "Stage clear";
-      dom.showId.textContent = "—";
-      setMarketplaceCounts({showVersion: 0, chat: [], epochs: [], receipts: []});
-      renderEvents({chat: []});
-      renderEpochs({epochs: []}, null);
-      renderReceipts({receipts: []});
+  async function renderMarketplace() {
+    const token = sessionToken();
+    if (!token) {
+      renderMarketplaceEmpty("Open the seller workspace first to start a server-owned demo session.");
       return;
     }
 
-    const {show, seller} = state;
-    dom.ledgerEmpty.hidden = true;
-    dom.seller.textContent = seller?.display_name || show.sellerId;
-    dom.showId.textContent = show.showId;
-    dom.activeSku.textContent = show.activeListingId
-      ? productForListing(seller, show.activeListingId)?.sku || show.activeListingId
-      : "Stage clear";
-    setMarketplaceCounts(show);
-    renderEvents(show);
-    renderEpochs(show, seller);
-    renderReceipts(show);
+    try {
+      const response = await fetchJson(
+        `/api/debug/marketplace?session_token=${encodeURIComponent(token)}`,
+        {cache: "no-store"},
+      );
+      if (response.runtime_source !== "m2_3_sqlite") {
+        throw new Error("Unexpected marketplace ledger source.");
+      }
+      const state = response.snapshot;
+      const active = listingForId(state, state.show.active_listing_id);
+      dom.ledgerEmpty.hidden = true;
+      dom.seller.textContent = state.seller.display_name;
+      dom.showId.textContent = state.show.show_id;
+      dom.activeSku.textContent = active?.sku || "Stage clear";
+      setMarketplaceCounts(state);
+      renderEvents(state);
+      renderEpochs(state);
+      renderReceipts(state);
+    } catch (error) {
+      renderMarketplaceEmpty(error.message);
+    }
   }
 
-  function setMarketplaceCounts(show) {
-    dom.showVersion.textContent = String(show.showVersion);
-    dom.eventCount.textContent = String(show.chat.length);
-    dom.epochCount.textContent = String(show.epochs.length);
-    dom.receiptCount.textContent = String(show.receipts.length);
-    dom.tabEventCount.textContent = String(show.chat.length);
-    dom.tabEpochCount.textContent = String(show.epochs.length);
-    dom.tabReceiptCount.textContent = String(show.receipts.length);
+  function connectMarketplaceEvents() {
+    marketplaceEventSource?.close();
+    const token = sessionToken();
+    if (!token) return;
+    marketplaceEventSource = new EventSource(
+      `/api/sessions/${encodeURIComponent(token)}/events`,
+    );
+    ["chat.accepted", "marketplace.changed"].forEach((type) => {
+      marketplaceEventSource.addEventListener(type, () => renderMarketplace());
+    });
   }
 
-  function renderEvents(show) {
-    if (show.chat.length === 0) {
+  function renderMarketplaceEmpty(message) {
+    dom.ledgerEmpty.hidden = false;
+    dom.ledgerEmpty.querySelector("p").textContent = message;
+    dom.seller.textContent = "No seller state";
+    dom.activeSku.textContent = "Stage clear";
+    dom.showId.textContent = "—";
+    const empty = {show: {version: 0}, chat_events: [], epochs: [], receipts: []};
+    setMarketplaceCounts(empty);
+    renderEvents(empty);
+    renderEpochs(empty);
+    renderReceipts(empty);
+  }
+
+  function setMarketplaceCounts(state) {
+    dom.showVersion.textContent = String(state.show.version);
+    dom.eventCount.textContent = String(state.chat_events.length);
+    dom.epochCount.textContent = String(state.epochs.length);
+    dom.receiptCount.textContent = String(state.receipts.length);
+    dom.tabEventCount.textContent = String(state.chat_events.length);
+    dom.tabEpochCount.textContent = String(state.epochs.length);
+    dom.tabReceiptCount.textContent = String(state.receipts.length);
+  }
+
+  function renderEvents(state) {
+    if (state.chat_events.length === 0) {
       dom.eventLedger.innerHTML = '<p class="ledger-empty">No raw chat events have been accepted.</p>';
       return;
     }
 
-    dom.eventLedger.innerHTML = [...show.chat]
-      .sort((a, b) => a.showSeq - b.showSeq)
+    dom.eventLedger.innerHTML = [...state.chat_events]
+      .sort((a, b) => a.show_seq - b.show_seq)
       .map(
         (event) => `
           <article class="event-row">
-            <code>#${String(event.showSeq).padStart(3, "0")}</code>
-            <div><strong>${escapeHtml(event.customerDisplayName)}</strong><span class="ledger-badge">${escapeHtml(event.inputOrigin)}</span></div>
-            <p class="event-raw">${escapeHtml(event.rawText)}</p>
-            <div><code>${escapeHtml(event.sourceEpochId ? shortEpoch(event.sourceEpochId) : "No cue")}</code><span class="ledger-badge">${escapeHtml(event.sourceListingId || "slot empty")}</span></div>
-            <code>${escapeHtml(formatClock(event.acceptedAt))}</code>
+            <code>#${String(event.show_seq).padStart(3, "0")}</code>
+            <div><strong>${escapeHtml(event.customer_display_name)}</strong><span class="ledger-badge">${escapeHtml(event.input_origin)}</span></div>
+            <p class="event-raw">${escapeHtml(event.raw_text)}</p>
+            <div><code>${escapeHtml(event.source_epoch_id ? shortEpoch(event.source_epoch_id) : "No cue")}</code><span class="ledger-badge">${escapeHtml(event.source_listing_id || "slot empty")}</span></div>
+            <code>${escapeHtml(formatClock(event.accepted_at))}</code>
           </article>
         `,
       )
       .join("");
   }
 
-  function renderEpochs(show, seller) {
-    if (show.epochs.length === 0) {
+  function renderEpochs(state) {
+    if (state.epochs.length === 0) {
       dom.epochLedger.innerHTML = '<p class="ledger-empty">No listing epoch has opened. Push a listing from the seller workspace.</p>';
       return;
     }
 
-    dom.epochLedger.innerHTML = show.epochs
+    dom.epochLedger.innerHTML = state.epochs
       .map((epoch, index) => {
-        const product = productForListing(seller, epoch.listingId);
+        const listing = listingForId(state, epoch.listing_id);
         return `
-          <article class="epoch-row ${epoch.endSeq === null ? "is-open" : ""}">
+          <article class="epoch-row ${epoch.end_seq === null ? "is-open" : ""}">
             <div class="epoch-cell"><span>Epoch</span><strong>${escapeHtml(`E${String(index + 1).padStart(2, "0")}`)}</strong></div>
-            <div class="epoch-cell"><span>Listing</span><strong>${escapeHtml(product?.listing?.title || epoch.listingId)}</strong><code>${escapeHtml(product?.sku || epoch.listingId)}</code></div>
-            <div class="epoch-cell"><span>Sequence boundary</span><strong>${epoch.startSeq} → ${epoch.endSeq ?? "open"}</strong><code>${escapeHtml(epoch.epochId)}</code></div>
-            <div class="epoch-cell"><span>Wall clock</span><strong>${escapeHtml(formatClock(epoch.openedAt))}</strong><code>${epoch.closedAt ? `closed ${escapeHtml(formatClock(epoch.closedAt))}` : "active epoch"}</code></div>
+            <div class="epoch-cell"><span>Listing</span><strong>${escapeHtml(listing?.title || epoch.listing_id)}</strong><code>${escapeHtml(listing?.sku || epoch.listing_id)}</code></div>
+            <div class="epoch-cell"><span>Sequence boundary</span><strong>${epoch.start_seq} → ${epoch.end_seq ?? "open"}</strong><code>${escapeHtml(epoch.epoch_id)}</code></div>
+            <div class="epoch-cell"><span>State</span><strong>${epoch.end_seq === null ? "Active" : "Closed"}</strong><code>ordered by show_seq</code></div>
           </article>
         `;
       })
       .join("");
   }
 
-  function renderReceipts(show) {
-    if (show.receipts.length === 0) {
+  function renderReceipts(state) {
+    if (state.receipts.length === 0) {
       dom.receiptLedger.innerHTML = '<p class="ledger-empty">No marketplace operation has been attempted.</p>';
       return;
     }
 
-    dom.receiptLedger.innerHTML = [...show.receipts]
+    dom.receiptLedger.innerHTML = [...state.receipts]
       .reverse()
       .map((receipt, index) => {
         const isRejected = receipt.status === "rejected";
-        const relationship = receipt.compensationForReceiptId
-          ? `Compensates ${receipt.compensationForReceiptId}`
-          : receipt.compensatedByReceiptId
-            ? `Compensated by ${receipt.compensatedByReceiptId}`
+        const compensation = state.receipts.find(
+          (candidate) => candidate.compensation_for_receipt_id === receipt.receipt_id,
+        );
+        const relationship = receipt.compensation_for_receipt_id
+          ? `Compensates ${receipt.compensation_for_receipt_id}`
+          : compensation
+            ? `Compensated by ${compensation.receipt_id}`
             : "Original operation";
+        const listing = listingForId(state, receipt.listing_id);
+        const subject = listing
+          ? `${listing.title} · ${listing.sku}`
+          : receipt.variant_id || receipt.listing_id || state.show.show_id;
         return `
           <article class="receipt-row">
-            <code>#${String(show.receipts.length - index).padStart(3, "0")}</code>
-            <div class="receipt-cell"><span>Operation</span><strong>${escapeHtml(formatOperation(receipt.operationType))}</strong><span class="receipt-status ${isRejected ? "receipt-status--rejected" : ""}">${escapeHtml(receipt.status)}</span></div>
-            <div class="receipt-cell"><span>Subject</span><strong>${escapeHtml(receipt.subjectLabel)}</strong><code>${escapeHtml(receipt.receiptId)}</code></div>
-            <div class="receipt-cell"><span>Relationship</span><strong>${escapeHtml(relationship)}</strong><code>${escapeHtml(receipt.errorCode || "no error")}</code></div>
-            <div class="receipt-cell"><span>Recorded</span><strong>${escapeHtml(formatClock(receipt.recordedAt))}</strong><code>show v${receipt.after?.versions?.showVersion ?? "—"}</code></div>
-            <details class="receipt-details"><summary>Inspect state projection</summary><pre>${escapeHtml(prettyJson({requestedParameters: receipt.requestedParameters, expectedVersions: receipt.expectedVersions, resultingVersions: receipt.resultingVersions, before: receipt.before, after: receipt.after}))}</pre></details>
+            <code>#${String(state.receipts.length - index).padStart(3, "0")}</code>
+            <div class="receipt-cell"><span>Operation</span><strong>${escapeHtml(formatOperation(receipt.operation_type))}</strong><span class="receipt-status ${isRejected ? "receipt-status--rejected" : ""}">${escapeHtml(receipt.status)}</span></div>
+            <div class="receipt-cell"><span>Subject</span><strong>${escapeHtml(subject)}</strong><code>${escapeHtml(receipt.receipt_id)}</code></div>
+            <div class="receipt-cell"><span>Relationship</span><strong>${escapeHtml(relationship)}</strong><code>${escapeHtml(receipt.error_code || "no error")}</code></div>
+            <div class="receipt-cell"><span>Recorded</span><strong>${escapeHtml(formatClock(receipt.recorded_at))}</strong><code>show v${receipt.resulting_versions?.show_version ?? "—"}</code></div>
+            <details class="receipt-details"><summary>Inspect state projection</summary><pre>${escapeHtml(prettyJson({request: receipt.request, expected_versions: receipt.expected_versions, resulting_versions: receipt.resulting_versions, before: receipt.before, after: receipt.after}))}</pre></details>
           </article>
         `;
       })
@@ -582,8 +601,8 @@
     });
   }
 
-  function productForListing(seller, listingId) {
-    return seller?.products?.find((product) => product.listing.listing_id === listingId) || null;
+  function listingForId(state, listingId) {
+    return state?.listings?.find((listing) => listing.listing_id === listingId) || null;
   }
 
   function formatOperation(value) {
