@@ -1,0 +1,46 @@
+{
+  "schema_version": "sidestage.agent_core.scenario.v1",
+  "scenario_id": "generic-pressure-v1",
+  "generator_version": "agent-core-generator-v1",
+  "contract_file": "contract_v1.json",
+  "fixed_clock": {
+    "wall_time": "2026-08-17T00:00:00.000Z",
+    "monotonic_base_s": 1000.0
+  },
+  "core_budget_p95_ms": 1450.0,
+  "trace_overhead_budget_ms_per_event": 0.25,
+  "expected_dispatch_case_order": [
+    "burst-01", "burst-02", "burst-03", "burst-04",
+    "steady-09", "steady-10", "steady-11", "steady-12",
+    "steady-13", "steady-14", "late-15", "steady-16",
+    "cancel-17", "steady-18", "steady-19", "steady-20"
+  ],
+  "tasks": [
+    {"case_id": "burst-01", "at_ms": 0, "deadline_ms": 1000, "provider_condition": {"kind": "finish", "latency_ms": 100}, "expected": {"terminal_tool": "finish", "provider_called": true}},
+    {"case_id": "burst-02", "at_ms": 0, "deadline_ms": 1000, "provider_condition": {"kind": "abstain", "latency_ms": 120}, "expected": {"terminal_tool": "abstain", "provider_called": true}},
+    {"case_id": "burst-03", "at_ms": 0, "deadline_ms": 1000, "provider_condition": {"kind": "finish", "latency_ms": 20}, "expected": {"terminal_tool": "finish", "provider_called": true}},
+    {"case_id": "burst-04", "at_ms": 0, "deadline_ms": 1000, "provider_condition": {"kind": "missing_terminal_call", "latency_ms": 20}, "expected": {"failure_code": "missing_terminal_call", "provider_called": true}},
+    {"case_id": "burst-05", "at_ms": 0, "deadline_ms": 50, "provider_condition": {"kind": "finish", "latency_ms": 20}, "expected": {"failure_code": "hard_timeout", "provider_called": false, "timeout_phase": "queued"}},
+    {"case_id": "burst-06", "at_ms": 0, "deadline_ms": 50, "provider_condition": {"kind": "finish", "latency_ms": 20}, "expected": {"failure_code": "hard_timeout", "provider_called": false, "timeout_phase": "queued"}},
+    {"case_id": "burst-07", "at_ms": 0, "deadline_ms": 1000, "provider_condition": {"kind": "finish", "latency_ms": 20}, "expected": {"failure_code": "queue_full", "provider_called": false}},
+    {"case_id": "burst-08", "at_ms": 0, "deadline_ms": 1000, "provider_condition": {"kind": "finish", "latency_ms": 20}, "expected": {"failure_code": "queue_full", "provider_called": false}},
+    {"case_id": "steady-09", "at_ms": 200, "deadline_ms": 1000, "provider_condition": {"kind": "finish", "latency_ms": 30}, "expected": {"terminal_tool": "finish", "provider_called": true}},
+    {"case_id": "steady-10", "at_ms": 200, "deadline_ms": 1000, "provider_condition": {"kind": "unknown_tool", "latency_ms": 35}, "expected": {"failure_code": "unknown_tool", "provider_called": true}},
+    {"case_id": "steady-11", "at_ms": 240, "deadline_ms": 1000, "provider_condition": {"kind": "multiple_terminal_calls", "latency_ms": 25}, "expected": {"failure_code": "multiple_terminal_calls", "provider_called": true}},
+    {"case_id": "steady-12", "at_ms": 240, "deadline_ms": 1000, "provider_condition": {"kind": "malformed_arguments", "latency_ms": 25}, "expected": {"failure_code": "malformed_arguments", "provider_called": true}},
+    {"case_id": "steady-13", "at_ms": 280, "deadline_ms": 1000, "provider_condition": {"kind": "provider_error", "latency_ms": 25}, "expected": {"failure_code": "provider_error", "provider_called": true}},
+    {"case_id": "steady-14", "at_ms": 280, "deadline_ms": 1000, "provider_condition": {"kind": "missing_terminal_call", "latency_ms": 25}, "expected": {"failure_code": "missing_terminal_call", "provider_called": true}},
+    {"case_id": "late-15", "at_ms": 320, "deadline_ms": 100, "provider_condition": {"kind": "finish", "latency_ms": 500}, "expected": {"failure_code": "hard_timeout", "provider_called": true, "timeout_phase": "provider"}},
+    {"case_id": "steady-16", "at_ms": 320, "deadline_ms": 1000, "provider_condition": {"kind": "abstain", "latency_ms": 40}, "expected": {"terminal_tool": "abstain", "provider_called": true}},
+    {"case_id": "cancel-17", "at_ms": 360, "deadline_ms": 1000, "cancel_at_ms": 400, "provider_condition": {"kind": "finish", "latency_ms": 200}, "expected": {"failure_code": "cancelled", "provider_called": true}},
+    {"case_id": "steady-18", "at_ms": 370, "deadline_ms": 1000, "provider_condition": {"kind": "finish", "latency_ms": 20}, "expected": {"terminal_tool": "finish", "provider_called": true}},
+    {"case_id": "steady-19", "at_ms": 380, "deadline_ms": 1000, "provider_condition": {"kind": "finish", "latency_ms": 20}, "expected": {"terminal_tool": "finish", "provider_called": true}},
+    {"case_id": "steady-20", "at_ms": 380, "deadline_ms": 1000, "provider_condition": {"kind": "finish", "latency_ms": 20}, "expected": {"terminal_tool": "finish", "provider_called": true}}
+  ],
+  "live_matrix": [
+    {"case_id": "live-supported-01", "at_ms": 0, "deadline_ms": 15000, "model_input": {"prompt": "What bounded value is supported for alpha?", "evidence": ["Record A confirms that alpha maps to amber."]}, "expected": {"terminal_tool": "finish", "provider_called": true}},
+    {"case_id": "live-insufficient-02", "at_ms": 0, "deadline_ms": 15000, "model_input": {"prompt": "What bounded value is supported for bravo?", "evidence": []}, "expected": {"terminal_tool": "abstain", "provider_called": true}},
+    {"case_id": "live-supported-03", "at_ms": 50, "deadline_ms": 15000, "model_input": {"prompt": "What bounded value is supported for charlie?", "evidence": ["Source C confirms charlie with bounded value copper."]}, "expected": {"terminal_tool": "finish", "provider_called": true}},
+    {"case_id": "live-insufficient-04", "at_ms": 50, "deadline_ms": 15000, "model_input": {"prompt": "What bounded value is supported for delta?", "evidence": []}, "expected": {"terminal_tool": "abstain", "provider_called": true}}
+  ]
+}

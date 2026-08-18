@@ -124,6 +124,27 @@ def test_decodes_exactly_one_allowed_terminal_call() -> None:
         (
             ModelResponse(
                 model_id="scripted-model-v1",
+                terminal_calls=(
+                    call("emit_answer", '{"answer":"A","confidence":NaN}'),
+                ),
+            ),
+            CoreFailureCode.MALFORMED_ARGUMENTS,
+        ),
+        (
+            ModelResponse(
+                model_id="scripted-model-v1",
+                terminal_calls=(
+                    call(
+                        "emit_answer",
+                        '{"answer":"A","confidence":0.8,"confidence":0.9}',
+                    ),
+                ),
+            ),
+            CoreFailureCode.MALFORMED_ARGUMENTS,
+        ),
+        (
+            ModelResponse(
+                model_id="scripted-model-v1",
                 terminal_calls=(call("emit_answer", '{"answer":"missing confidence"}'),),
             ),
             CoreFailureCode.MALFORMED_ARGUMENTS,

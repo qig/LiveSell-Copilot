@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-from typing import Any, Iterable, Mapping, Optional, Protocol, Tuple, Union
+from typing import Any, Iterable, Literal, Mapping, Optional, Protocol, Tuple, Union
 from urllib.parse import urlsplit
 
 import httpx
@@ -88,6 +88,9 @@ class OpenAICompatibleModelConfig(FrozenContract):
     api_key: SecretStr = Field(repr=False)
     model_id: NonEmptyText
     request_timeout_s: PositiveFiniteFloat
+    reasoning_effort: Optional[
+        Literal["none", "low", "medium", "high", "xhigh", "max"]
+    ] = None
 
     @field_validator("base_url")
     @classmethod
@@ -95,6 +98,8 @@ class OpenAICompatibleModelConfig(FrozenContract):
         parsed = urlsplit(value)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("base_url must be an absolute HTTP(S) URL")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("base_url cannot contain embedded credentials")
         if parsed.query or parsed.fragment:
             raise ValueError("base_url cannot contain a query or fragment")
         return value.rstrip("/")
@@ -145,6 +150,8 @@ class OpenAICompatibleModelRunner:
             "parallel_tool_calls": False,
             "stream": False,
         }
+        if self.config.reasoning_effort is not None:
+            request_payload["reasoning_effort"] = self.config.reasoning_effort
         try:
             response = await self._http_client.post(
                 f"{self.config.base_url}/chat/completions",

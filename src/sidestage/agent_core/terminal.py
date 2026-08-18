@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Iterable, Tuple
 
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
@@ -18,6 +18,21 @@ class TerminalResponseError(ValueError):
     def __init__(self, code: CoreFailureCode, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
+
+
+def _reject_duplicate_object_keys(
+    pairs: Iterable[Tuple[str, Any]],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key is forbidden: {key}")
+        result[key] = value
+    return result
 
 
 def decode_terminal_response(
@@ -47,7 +62,11 @@ def decode_terminal_response(
         )
 
     try:
-        arguments: Any = json.loads(call.arguments_json)
+        arguments: Any = json.loads(
+            call.arguments_json,
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_object_keys,
+        )
     except (TypeError, ValueError) as exc:
         raise TerminalResponseError(
             CoreFailureCode.MALFORMED_ARGUMENTS,

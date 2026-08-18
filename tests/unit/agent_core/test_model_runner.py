@@ -4,7 +4,8 @@ import asyncio
 import json
 import time
 
-from pydantic import SecretStr
+import pytest
+from pydantic import SecretStr, ValidationError
 
 from sidestage.agent_core import (
     AgentProfile,
@@ -337,6 +338,7 @@ def test_openai_compatible_runner_maps_one_http_request() -> None:
             api_key=SecretStr("credential-must-not-leak"),
             model_id="provider-model-pinned",
             request_timeout_s=3.0,
+            reasoning_effort="none",
         ),
         http_client=client,
     )
@@ -353,6 +355,7 @@ def test_openai_compatible_runner_maps_one_http_request() -> None:
     assert request["json"]["tool_choice"] == "required"
     assert request["json"]["parallel_tool_calls"] is False
     assert request["json"]["stream"] is False
+    assert request["json"]["reasoning_effort"] == "none"
     assert [message["role"] for message in request["json"]["messages"]] == [
         "system",
         "user",
@@ -360,3 +363,26 @@ def test_openai_compatible_runner_maps_one_http_request() -> None:
     assert request["json"]["tools"][0]["function"]["name"] == "emit_answer"
     assert request["timeout"] == 3.0
     assert "credential-must-not-leak" not in json.dumps(request["json"])
+
+
+def test_openai_compatible_config_rejects_credentials_in_base_url() -> None:
+    with pytest.raises(ValidationError, match="embedded credentials"):
+        OpenAICompatibleModelConfig(
+            config_ref="unsafe-config-v1",
+            base_url="https://user:password@provider.invalid/v1",
+            api_key=SecretStr("separate-api-key"),
+            model_id="provider-model-pinned",
+            request_timeout_s=3.0,
+        )
+
+
+def test_openai_compatible_runner_omits_unspecified_reasoning_effort() -> None:
+    config = OpenAICompatibleModelConfig(
+        config_ref="default-reasoning-v1",
+        base_url="https://provider.invalid/v1",
+        api_key=SecretStr("credential-must-not-leak"),
+        model_id="provider-model-pinned",
+        request_timeout_s=3.0,
+    )
+
+    assert config.reasoning_effort is None

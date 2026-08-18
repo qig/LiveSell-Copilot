@@ -1,0 +1,65 @@
+{
+  "schema_version": "sidestage.agent_core.contract.v1",
+  "generator_version": "agent-core-generator-v1",
+  "profile": {
+    "adapter_id": "generic.evidence_decision",
+    "profile_version": "1.0.0",
+    "system_policy": "Use only the supplied generic evidence. If evidence is sufficient, call finish exactly once. If it is empty or insufficient, call abstain exactly once. Never emit ordinary text.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "prompt": {"type": "string", "minLength": 1, "maxLength": 512},
+        "evidence": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {"type": "string", "minLength": 1, "maxLength": 256}
+        }
+      },
+      "required": ["prompt", "evidence"],
+      "additionalProperties": false
+    },
+    "terminal_tools": [
+      {
+        "name": "finish",
+        "description": "Return one answer supported by the supplied generic evidence.",
+        "parameters_schema": {
+          "type": "object",
+          "properties": {"answer": {"type": "string", "minLength": 1, "maxLength": 512}},
+          "required": ["answer"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "abstain",
+        "description": "Decline when the supplied generic evidence is insufficient.",
+        "parameters_schema": {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "enum": ["insufficient_evidence", "conflicting_evidence"]
+            }
+          },
+          "required": ["reason"],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "queue_policy": {"capacity": 6, "max_concurrency": 2},
+    "deadline_policy": {"default_timeout_ms": 1000, "max_timeout_ms": 20000},
+    "model_config_ref": "agent-core-evaluation-v1",
+    "max_model_input_bytes": 4096
+  },
+  "prompt_templates": [
+    "Determine the supported conclusion for record group {ordinal} about topic {topic}.",
+    "Use the bounded records to answer generic question {ordinal} concerning {topic}.",
+    "Choose a terminal result for evidence set {ordinal} in category {topic}."
+  ],
+  "topics": ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"],
+  "evidence_templates": [
+    "Record {record}: the verified value for {topic} is {value}.",
+    "Source {record} confirms {topic} with bounded value {value}.",
+    "Evidence {record} states that {topic} maps to {value}."
+  ],
+  "values": ["amber", "blue", "copper", "green", "silver", "violet"]
+}

@@ -24,7 +24,7 @@ build-backend = "hatchling.build"
 packages = ["src/sidestage"]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = '-ra -m "not live_model"'
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [

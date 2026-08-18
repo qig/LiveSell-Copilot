@@ -30,6 +30,7 @@ def test_configured_live_provider_returns_one_sanitized_terminal_outcome() -> No
     base_url = os.environ.get("SIDESTAGE_MODEL_BASE_URL")
     api_key = os.environ.get("SIDESTAGE_MODEL_API_KEY")
     model_id = os.environ.get("SIDESTAGE_MODEL_ID")
+    reasoning_effort = os.environ.get("SIDESTAGE_MODEL_REASONING_EFFORT")
     if not all((base_url, api_key, model_id)):
         pytest.skip(
             "set SIDESTAGE_MODEL_BASE_URL, SIDESTAGE_MODEL_API_KEY, and "
@@ -85,6 +86,7 @@ def test_configured_live_provider_returns_one_sanitized_terminal_outcome() -> No
             api_key=SecretStr(api_key),
             model_id=model_id,
             request_timeout_s=15.0,
+            reasoning_effort=reasoning_effort,
         )
     )
     identifiers = iter(("live-smoke-run", "live-smoke-generated-trace"))

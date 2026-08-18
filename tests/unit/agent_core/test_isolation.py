@@ -21,10 +21,14 @@ def test_agent_core_imports_and_runs_without_m1_or_m2_modules_or_fixtures() -> N
         import sys
 
         BLOCKED_MODULES = (
+            "sidestage.app",
             "sidestage.config",
             "sidestage.domain",
             "sidestage.fixtures",
             "sidestage.marketplace",
+            "sidestage.storage",
+            "sidestage.streaming",
+            "sidestage.web",
             "sidestage.copilot",
             "sidestage.livesell",
         )
@@ -62,6 +66,8 @@ def test_agent_core_imports_and_runs_without_m1_or_m2_modules_or_fixtures() -> N
             TerminalToolSchema,
             register_profile,
         )
+        from sidestage.agent_core.evaluation import generate_workload
+        from pathlib import Path
 
         profile = AgentProfile(
             adapter_id="isolated.adapter",
@@ -106,6 +112,16 @@ def test_agent_core_imports_and_runs_without_m1_or_m2_modules_or_fixtures() -> N
 
         projection = registered.project_model_request(task, now_monotonic_s=100.0)
         assert projection.to_provider_dict()["input"] == {"prompt": "hello"}
+
+        workload = generate_workload(
+            Path("fixtures/agent_core/pressure_v1.json"),
+            seed=20260817,
+            model_mode="scripted",
+            implementation_commit="isolation-audit",
+            worktree_dirty=False,
+        )
+        assert len(workload.tasks) == 20
+        assert workload.manifest["evaluation_scope"] == "agent_core"
         assert not any(
             loaded == blocked or loaded.startswith(blocked + ".")
             for loaded in sys.modules
