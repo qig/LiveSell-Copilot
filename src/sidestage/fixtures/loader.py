@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Dict, Mapping, Tuple, TypeVar
+from typing import Callable, Dict, Mapping, Optional, Tuple, TypeVar
 
 from pydantic import ValidationError
 
@@ -39,6 +40,7 @@ class CatalogCounts:
 
 Entity = TypeVar("Entity")
 OwnedEntity = Tuple[str, Entity]
+ImportObserver = Callable[[str, str, Mapping[str, object]], None]
 
 
 @dataclass(frozen=True)
@@ -117,26 +119,113 @@ def _tenant_entity(
     return entity
 
 
-def load_seller_fixture(path: Path = DEFAULT_SELLERS_FIXTURE) -> SellerCatalog:
+def _observe(
+    observer: Optional[ImportObserver],
+    stage: str,
+    state: str,
+    details: Optional[Mapping[str, object]] = None,
+) -> None:
+    """Emit diagnostic metadata without granting the sink import authority."""
+
+    if observer is None:
+        return
+    try:
+        observer(stage, state, details or {})
+    except Exception:
+        # Diagnostics must never alter the authoritative import result.
+        return
+
+
+def load_seller_fixture(
+    path: Path = DEFAULT_SELLERS_FIXTURE,
+    *,
+    observer: Optional[ImportObserver] = None,
+) -> SellerCatalog:
     """Load the approved seller fixture without accepting runtime authority fields."""
 
+    _observe(observer, "source_read", "started")
     try:
         raw_json = path.read_text(encoding="utf-8")
     except OSError as error:
+        _observe(
+            observer,
+            "source_read",
+            "failed",
+            {"reason_code": "FIXTURE_UNAVAILABLE"},
+        )
         raise SellerFixtureError(f"seller fixture is unavailable: {path}") from error
+    _observe(
+        observer,
+        "source_read",
+        "passed",
+        {
+            "byte_count": len(raw_json.encode("utf-8")),
+            "sha256": hashlib.sha256(raw_json.encode("utf-8")).hexdigest(),
+        },
+    )
 
+    _observe(observer, "contract_validation", "started")
     try:
         document = SellerFixtureDocument.model_validate_json(raw_json)
     except (ValidationError, ValueError) as error:
         count = error.error_count() if isinstance(error, ValidationError) else 1
+        _observe(
+            observer,
+            "contract_validation",
+            "failed",
+            {
+                "reason_code": "FIXTURE_CONTRACT_INVALID",
+                "validation_error_count": count,
+            },
+        )
         raise SellerFixtureError(
             f"seller fixture failed {count} contract validation error(s): {path}"
         ) from error
+    _observe(
+        observer,
+        "contract_validation",
+        "passed",
+        {"seller_count": len(document.sellers)},
+    )
 
+    _observe(observer, "approved_seller_set", "started")
     actual_sellers = {
         seller.seller_id: (seller.display_name, seller.persona) for seller in document.sellers
     }
     if actual_sellers != EXPECTED_SELLERS:
+        _observe(
+            observer,
+            "approved_seller_set",
+            "failed",
+            {"reason_code": "SELLER_SET_NOT_APPROVED"},
+        )
         raise SellerFixtureError("seller fixture must contain the three approved seller personas")
+    _observe(
+        observer,
+        "approved_seller_set",
+        "passed",
+        {"seller_ids": list(actual_sellers)},
+    )
 
-    return SellerCatalog.from_document(document)
+    _observe(observer, "tenant_index_build", "started")
+    try:
+        catalog = SellerCatalog.from_document(document)
+    except Exception:
+        _observe(
+            observer,
+            "tenant_index_build",
+            "failed",
+            {"reason_code": "TENANT_INDEX_BUILD_FAILED"},
+        )
+        raise
+    _observe(
+        observer,
+        "tenant_index_build",
+        "passed",
+        {
+            "products": catalog.counts.products,
+            "listings": catalog.counts.listings,
+            "variants": catalog.counts.variants,
+        },
+    )
+    return catalog

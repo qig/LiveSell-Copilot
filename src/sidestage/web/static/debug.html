@@ -3,13 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="SideStage Milestone 2 synthetic developer ledger" />
-    <title>SideStage — Developer ledger</title>
+    <meta name="description" content="SideStage message and catalog debugger" />
+    <title>SideStage — Debugger</title>
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./trace.css" />
     <script src="./debugger.js" defer></script>
   </head>
   <body class="debug-body">
-    <a class="skip-link" href="#debug-main">Skip to ledger</a>
+    <a class="skip-link" href="#trace-main">Skip to message trace</a>
     <div class="ambient-grid" aria-hidden="true"></div>
 
     <header class="global-header debug-header">
@@ -17,7 +18,7 @@
         <span class="wordmark-mark" aria-hidden="true">S</span>
         <span class="wordmark-type">
           <strong>SideStage</strong>
-          <small>developer ledger</small>
+          <small>debugger</small>
         </span>
       </a>
 
@@ -27,98 +28,220 @@
       </div>
 
       <div class="header-statuses">
-        <div class="status-chip status-chip--muted"><span>Read only</span><span class="status-suffix">M2</span></div>
+        <div class="status-chip status-chip--muted">
+          <span>Demo trace</span><span class="status-suffix">Agent offline</span>
+        </div>
         <button class="button button--quiet" id="refresh-ledger" type="button">Refresh</button>
         <a class="button button--paper" href="./index.html">Seller workspace</a>
       </div>
     </header>
 
-    <main class="debug-main" id="debug-main">
-      <header class="debug-intro">
-        <div>
-          <p class="eyebrow">Internal evidence surface</p>
-          <h1>What changed—and in what order.</h1>
-          <p class="debug-lede">
-            Browser-adapter projections for UI inspection only. This is not the future SQLite audit ledger or SSE trace store.
+    <main class="debug-main trace-main" id="trace-main">
+      <section class="trace-hero" aria-labelledby="trace-title">
+        <div class="trace-hero-copy">
+          <p class="eyebrow">Message trace</p>
+          <h1 id="trace-title">Where did this message stop?</h1>
+          <p class="trace-lede">
+            Follow one customer message toward a reply. The trace stops where the current build stops.
           </p>
         </div>
-        <div class="debug-active-readout">
-          <span>Active cue</span>
-          <strong id="debug-active-sku">Stage clear</strong>
-          <small id="debug-show-id">—</small>
+        <div class="trace-disclosure">
+          <span class="trace-disclosure-mark" aria-hidden="true">P</span>
+          <div>
+            <strong>Simulated flow · agent not connected</strong>
+            <small>No reply can move past the Agent stage in this build.</small>
+          </div>
         </div>
-      </header>
-
-      <section class="debug-stats" aria-label="Current state summary">
-        <article>
-          <span>Show version</span>
-          <strong id="stat-show-version">0</strong>
-        </article>
-        <article>
-          <span>Raw chat events</span>
-          <strong id="stat-event-count">0</strong>
-        </article>
-        <article>
-          <span>Listing epochs</span>
-          <strong id="stat-epoch-count">0</strong>
-        </article>
-        <article>
-          <span>Operation receipts</span>
-          <strong id="stat-receipt-count">0</strong>
-        </article>
       </section>
 
-      <nav class="ledger-tabs" aria-label="Ledger sections">
-        <button class="ledger-tab is-active" data-ledger-tab="events" type="button">
-          Raw events <span id="tab-event-count">0</span>
-        </button>
-        <button class="ledger-tab" data-ledger-tab="epochs" type="button">
-          Listing epochs <span id="tab-epoch-count">0</span>
-        </button>
-        <button class="ledger-tab" data-ledger-tab="receipts" type="button">
-          Receipts <span id="tab-receipt-count">0</span>
-        </button>
-      </nav>
-
-      <section class="ledger-panel is-active" id="ledger-events" data-ledger-panel="events" aria-labelledby="events-title">
-        <div class="ledger-heading">
+      <section class="import-trace" id="import-trace-panel" aria-labelledby="import-trace-title">
+        <header class="import-trace-header">
           <div>
-            <p class="eyebrow">Replay projection</p>
-            <h2 id="events-title">Chronological chat</h2>
+            <p class="eyebrow">Catalog check</p>
+            <h2 id="import-trace-title">Catalog data import</h2>
+            <p>Check seller data before it becomes available to the workspace.</p>
           </div>
-          <span>Raw text preserved</span>
+          <span class="import-runtime-badge" id="import-trace-runtime">NOT CHECKED</span>
+          <button class="button button--paper" id="run-import-trace" type="button">Check import</button>
+        </header>
+
+        <div class="import-trace-status" id="import-trace-status" role="status" aria-live="polite">
+          Not checked · start the local server to run this backend check.
         </div>
-        <div class="ledger-list" id="event-ledger"></div>
+
+        <div class="import-stage-rail" id="import-stage-rail" aria-label="Catalog import stages"></div>
+
+        <div class="import-trace-result">
+          <div class="import-trace-diagnosis" id="import-trace-diagnosis">
+            <span class="import-trace-mark" aria-hidden="true">→</span>
+            <div>
+              <span>Import outcome</span>
+              <strong>Waiting for a backend check</strong>
+            </div>
+          </div>
+          <div class="import-trace-counts" id="import-trace-counts">— sellers · — listings · — variants</div>
+          <dl class="import-trace-meta">
+            <div><dt>Trace</dt><dd id="import-trace-id">—</dd></div>
+            <div><dt>Source</dt><dd id="import-trace-source">—</dd></div>
+            <div><dt>Digest</dt><dd id="import-trace-digest">—</dd></div>
+          </dl>
+        </div>
+
+        <details class="import-trace-payload">
+          <summary id="import-trace-payload-disclosure">Inspect technical import record</summary>
+          <pre id="import-trace-payload">null</pre>
+        </details>
       </section>
 
-      <section class="ledger-panel" id="ledger-epochs" data-ledger-panel="epochs" aria-labelledby="epochs-title" hidden>
-        <div class="ledger-heading">
-          <div>
-            <p class="eyebrow">Temporal state</p>
-            <h2 id="epochs-title">Listing epoch history</h2>
-          </div>
-          <span>Append only</span>
+      <section class="trace-console" aria-label="Trace scenario controls">
+        <div class="trace-controls">
+          <label>
+            <span>Scenario</span>
+            <select id="trace-scenario" disabled>
+              <option>Loading trace fixtures…</option>
+            </select>
+          </label>
+          <label>
+            <span>Inspect event</span>
+            <select id="trace-event" disabled>
+              <option>Waiting for scenario</option>
+            </select>
+          </label>
+          <button class="button button--paper" id="reset-trace" type="button" disabled>Reset</button>
+          <button class="button button--signal trace-run" id="run-trace" type="button" disabled>
+            Run trace
+          </button>
         </div>
-        <div class="epoch-timeline" id="epoch-ledger"></div>
+        <div class="trace-control-status" id="trace-status" role="status" aria-live="polite">
+          Loading demo messages…
+        </div>
       </section>
 
-      <section class="ledger-panel" id="ledger-receipts" data-ledger-panel="receipts" aria-labelledby="receipts-title" hidden>
-        <div class="ledger-heading">
-          <div>
-            <p class="eyebrow">Action audit projection</p>
-            <h2 id="receipts-title">Operation receipts</h2>
-          </div>
-          <span>Applied · rejected · compensated</span>
+      <section class="trace-event-card" aria-labelledby="trace-event-title">
+        <div class="trace-event-index" id="trace-event-index">—</div>
+        <div class="trace-event-question">
+          <span id="trace-event-customer">Customer</span>
+          <h2 id="trace-event-title">Select a trace event</h2>
+          <p id="trace-event-text">The raw buyer message will appear here.</p>
         </div>
-        <div class="receipt-ledger" id="receipt-ledger"></div>
+        <dl class="trace-event-meta" id="trace-event-meta">
+          <div><dt>Trace</dt><dd>—</dd></div>
+          <div><dt>Bound SKU</dt><dd>—</dd></div>
+          <div><dt>Expected</dt><dd>—</dd></div>
+        </dl>
+      </section>
+
+      <nav class="trace-stage-rail" id="trace-stage-rail" aria-label="Reply pipeline stages"></nav>
+
+      <section class="trace-diagnosis is-loading" id="trace-diagnosis" aria-live="polite">
+        <span class="trace-diagnosis-icon" id="trace-diagnosis-icon" aria-hidden="true">···</span>
+        <div>
+          <p class="eyebrow">First decisive stage</p>
+          <h2 id="trace-diagnosis-title">Trace fixture loading</h2>
+          <p id="trace-diagnosis-message">The diagnostic summary will identify where processing stopped.</p>
+        </div>
+        <div class="trace-diagnosis-time">
+          <span>Total</span>
+          <strong id="trace-total-duration">—</strong>
+        </div>
+      </section>
+
+      <section class="trace-inspector" aria-labelledby="trace-stage-title">
+        <header class="trace-inspector-header">
+          <div>
+            <p class="eyebrow" id="trace-stage-kicker">Select a stage</p>
+            <h2 id="trace-stage-title">Stage detail</h2>
+          </div>
+          <div class="trace-stage-facts">
+            <span id="trace-stage-state">WAITING</span>
+            <code id="trace-stage-duration">—</code>
+          </div>
+        </header>
+        <p class="trace-stage-summary" id="trace-stage-summary">Choose a stage to inspect the simulated input and output.</p>
+        <div class="trace-stage-reason-row">
+          <span>Reason code</span>
+          <code id="trace-stage-reason">—</code>
+        </div>
+        <div class="trace-payload-grid">
+          <article>
+            <header><span>Stage input</span><small>Demo JSON</small></header>
+            <pre id="trace-stage-input">null</pre>
+          </article>
+          <article>
+            <header><span>Stage output</span><small>Demo JSON</small></header>
+            <pre id="trace-stage-output">null</pre>
+          </article>
+        </div>
+      </section>
+
+      <section class="trace-destinations" aria-labelledby="trace-destinations-title">
+        <header class="trace-section-heading">
+          <div>
+            <p class="eyebrow">Destinations</p>
+            <h2 id="trace-destinations-title">Did anything receive reply data?</h2>
+          </div>
+          <span>Chat · Inbox · Receipt</span>
+        </header>
+        <div class="trace-destination-grid" id="trace-destination-grid"></div>
+      </section>
+
+      <section class="market-ledger-shell" aria-labelledby="market-ledger-title">
+        <header class="debug-intro market-ledger-intro">
+          <div>
+            <p class="eyebrow">Marketplace activity</p>
+            <h2 id="market-ledger-title">What changed—and in what order.</h2>
+            <p class="debug-lede">
+              Chat, listing changes, and seller actions remain separate from the message trace.
+            </p>
+          </div>
+          <div class="debug-active-readout">
+            <span>Active cue</span>
+            <strong id="debug-active-sku">Stage clear</strong>
+            <small id="debug-show-id">—</small>
+          </div>
+        </header>
+
+        <section class="debug-stats" aria-label="Current marketplace state summary">
+          <article><span>Show version</span><strong id="stat-show-version">0</strong></article>
+          <article><span>Raw chat events</span><strong id="stat-event-count">0</strong></article>
+          <article><span>Listing epochs</span><strong id="stat-epoch-count">0</strong></article>
+          <article><span>Operation receipts</span><strong id="stat-receipt-count">0</strong></article>
+        </section>
+
+        <div class="debug-empty debug-empty--inline" id="debug-empty" hidden>
+          <span>00</span>
+          <h2>No show activity yet.</h2>
+          <p>Open the seller workspace to create chat, listing, and seller-action records.</p>
+          <a class="button button--signal" href="./index.html">Open seller workspace</a>
+        </div>
+
+        <nav class="ledger-tabs" aria-label="Marketplace ledger sections">
+          <button class="ledger-tab is-active" data-ledger-tab="events" type="button">
+            Raw events <span id="tab-event-count">0</span>
+          </button>
+          <button class="ledger-tab" data-ledger-tab="epochs" type="button">
+            Listing epochs <span id="tab-epoch-count">0</span>
+          </button>
+          <button class="ledger-tab" data-ledger-tab="receipts" type="button">
+            Receipts <span id="tab-receipt-count">0</span>
+          </button>
+        </nav>
+
+        <section class="ledger-panel is-active" id="ledger-events" data-ledger-panel="events" aria-labelledby="events-title">
+          <div class="ledger-heading"><div><p class="eyebrow">Chat history</p><h2 id="events-title">Chronological chat</h2></div><span>Original text</span></div>
+          <div class="ledger-list" id="event-ledger"></div>
+        </section>
+
+        <section class="ledger-panel" id="ledger-epochs" data-ledger-panel="epochs" aria-labelledby="epochs-title" hidden>
+          <div class="ledger-heading"><div><p class="eyebrow">Temporal state</p><h2 id="epochs-title">Listing epoch history</h2></div><span>Append only</span></div>
+          <div class="epoch-timeline" id="epoch-ledger"></div>
+        </section>
+
+        <section class="ledger-panel" id="ledger-receipts" data-ledger-panel="receipts" aria-labelledby="receipts-title" hidden>
+          <div class="ledger-heading"><div><p class="eyebrow">Action audit projection</p><h2 id="receipts-title">Operation receipts</h2></div><span>Applied · rejected · compensated</span></div>
+          <div class="receipt-ledger" id="receipt-ledger"></div>
+        </section>
       </section>
     </main>
-
-    <div class="debug-empty" id="debug-empty" hidden>
-      <span>00</span>
-      <h2>No synthetic show state yet.</h2>
-      <p>Open the seller workspace and perform an operation or add a chat message.</p>
-      <a class="button button--signal" href="./index.html">Open seller workspace</a>
-    </div>
   </body>
 </html>
