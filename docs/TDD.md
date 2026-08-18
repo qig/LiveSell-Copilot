@@ -272,37 +272,38 @@ For an authorized R3 write, the effect broker uses one local database transactio
 
 ## 10. Listing and inventory actions
 
-Marketplace effects originate from either an authenticated seller UI action or a validated synthetic customer purchase. Chat input never carries action authority.
+Marketplace effects originate only from an authenticated seller UI action. Chat input never carries action authority.
 
 Planned write flow:
 
 ```text
-Typed seller UI action request or marketplace event
+Typed seller UI action request
   -> authenticate source and tenant
   -> validate schema, policy, and expected version
   -> apply idempotency check
-  -> persist audit intent or transactional outbox record
-  -> execute against emulator adapter
-  -> read after write
-  -> append verified outcome to the audit record
+  -> begin one local SQLite transaction
+  -> execute against the emulator state
+  -> read after write and verify
+  -> insert an applied, rejected, or failed receipt
+  -> commit state and receipt together
   -> expose a conditional compensating operation for a supported seller action
 ```
 
-Execution must not begin if the audit intent cannot be persisted. Intent-persistence failure causes no mutation and cannot promise a durable receipt because the audit store itself is unavailable. A trusted request rejected after intent persistence records `rejected`; execution or verification failure records `failed`; neither may leave an unrecorded partial marketplace mutation.
+The local emulator and audit ledger share one SQLite transaction boundary. Receipt-persistence failure rolls back the marketplace mutation and cannot promise a durable receipt because the audit store itself is unavailable. A trusted request rejected after authorization records `rejected`; an injected execution or verification failure records `failed`; neither may leave an unrecorded partial marketplace mutation. The receipt retains the original typed request, so a separate action-intent table or transactional outbox is unnecessary until a future adapter introduces a remote marketplace boundary.
 
 The prototype exposes exactly five marketplace operation types:
 
 - `push`: `PushRequest(target_listing_id, expected_show_version)` requires an empty active slot and an available, in-stock target. It makes the listing active and opens a listing epoch.
 - `swap`: `SwapRequest(target_listing_id, expected_active_listing_id, expected_show_version)` requires an active listing and a different available, in-stock target. It atomically closes the prior epoch, activates the target, opens a new epoch, and leaves the previous listing available but inactive.
-- `unlist`: Seller `UnlistRequest(expected_active_listing_id, expected_show_version)` marks the active listing `unlisted`, closes its epoch, and leaves the slot empty. A derived zero-stock Unlist instead marks the listing `sold_out`.
+- `unlist`: Seller `UnlistRequest(expected_active_listing_id, expected_show_version)` marks the active listing `unlisted`, closes its epoch, and leaves the slot empty.
 - `price_markdown`: `PriceMarkdownRequest(listing_id, new_price_cents, expected_listing_version)` must target the active listing, lower its price, and remain at or above its seller-configured floor.
-- `inventory_change`: A validated `PurchaseRequest(purchase_id, variant_id, quantity=1)` decrements the variant. If resulting aggregate stock is zero, it commits a linked `unlist` in the same transaction. Exhausting only one variant does not Unlist while another remains available.
+- `inventory_change`: Seller `InventoryChangeRequest(listing_id, variant_id, new_available_quantity, expected_inventory_version)` must target a variant of the active listing and set its available quantity to a nonnegative integer. A result of zero leaves the listing active; only an explicit Unlist changes listing state.
 
-Actor, seller, and show identity come from the authenticated session rather than request fields. The customer submits `PurchaseRequest`, never a direct Inventory Change. Push against a non-empty slot, Swap against an empty slot, Swap to the already-active SKU, and every stale or policy-invalid request are rejected without mutation and receive an audited refusal. The show starts with an empty active-listing slot. An explicitly unlisted listing returns only through a valid rollback; no separate Clear or Relist operation is in scope.
+Actor, seller, and show identity come from the authenticated session rather than request fields. Push against a non-empty slot, Swap against an empty slot, Swap to the already-active SKU, and every stale or policy-invalid request are rejected without mutation and receive an audited refusal. The show starts with an empty active-listing slot. An explicitly unlisted listing returns only through a valid rollback; no separate Clear or Relist operation is in scope.
 
-Customer cancellation, failed-payment, return, and refund events are out of scope. Free-form manual stock adjustment, AI-recommended actions, and natural-language seller commands are also out of scope.
+Purchase, checkout, customer cancellation, failed-payment, return, and refund events are out of scope. Stock edits outside the typed Inventory Change control, AI-recommended actions, and natural-language seller commands are also out of scope.
 
-There is no bidding, auction, offer, giveaway, or customer-facing audit action. The action audit ledger is backend safety infrastructure required by the challenge and is not part of the customer interaction model.
+There is no bidding, auction, offer, giveaway, or customer-facing audit action. Buyer chat is the only customer surface. The action audit ledger is backend safety infrastructure required by the challenge and is not part of the customer interaction model.
 
 ## 11. Auditability and rollback
 
@@ -316,17 +317,18 @@ Every attempted operation returns one `OperationReceipt` containing:
 - Expected and resulting versions.
 - Policy and authorization verdicts.
 - Idempotency key.
-- Optional parent operation identifier for a derived zero-stock Unlist, plus optional `compensation_for_receipt_id` for rollback. A compensating receipt retains the original one-of-five `operation_type`; `rollback` is never a sixth operation type.
+- Optional `compensation_for_receipt_id` for rollback. A compensating receipt retains the original one-of-five `operation_type`; `rollback` is never a sixth operation type.
 - `recorded_at`, optional `executed_at`, and optional typed error code.
 
-All five operation types produce internal receipts. A rollback request references the original `receipt_id`; it is a compensating safety control, not a sixth operation. Rollback is supported only for the four authenticated seller operations:
+All five seller operation types produce internal receipts. A rollback request references the original `receipt_id`; it is a compensating safety control, not a sixth operation. Conditional rollback is supported for all five operations:
 
 - Push rollback returns the just-pushed active slot to empty.
 - Swap rollback restores the previous active SKU.
 - Unlist rollback restores the previously active SKU.
 - Price Markdown rollback restores the previous price.
+- Inventory Change rollback restores the previous available quantity.
 
-Each rollback is a version-checked internal compensating action linked to its original receipt. It refuses safely when later state would be overwritten. A completed purchase-driven Inventory Change and its derived zero-stock Unlist are not rollback-capable because that would create a cancellation workflow; they must instead commit atomically, be idempotent, and be fully audited. Rollback is not a sixth product operation.
+Each rollback is a version-checked internal compensating action linked to its original receipt. It refuses safely when later state would be overwritten. Rollback is not a sixth product operation.
 
 ## 12. Latency boundary and budget
 
