@@ -5,6 +5,7 @@ description = "Synthetic live-selling copilot prototype"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
+  "jsonschema>=4.23,<5",
   "pydantic>=2.6,<3",
 ]
 
