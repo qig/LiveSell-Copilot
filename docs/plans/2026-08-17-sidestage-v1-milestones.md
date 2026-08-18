@@ -2,11 +2,11 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 >
-> Status: `Accepted`; Milestone 2 is `Verified` at `734d151`; deterministic M3B.1-M3B.4 behavior is `Verified` at runtime commit `7d6c349` and replay/evaluation commit `6ba208a`; the M3B.5 live release gate remains open. This document does not authorize staging or commits by itself.
+> Status: `Accepted`; Milestone 2 is `Verified` at `734d151`; deterministic M3B.1-M3B.4 behavior is `Verified` at runtime commit `7d6c349` and replay/evaluation commit `6ba208a`; the M3B.5 Optimization and Debug Session extension is `Accepted` but not yet `Implemented`, and its live release gate remains open. This document does not authorize staging or commits by itself.
 
 **Goal:** Build and verify the SideStage v1 synthetic livesell emulator, reusable static single-step agent core, and bounded reply copilot through small, testable sub-milestones, each independently reviewed and committed with a builder-approved message.
 
-**Architecture:** A domain-neutral in-process Python `StaticAgentCore` owns one-request-per-run model invocation, immutable startup profile registration, static terminal-call validation, bounded FIFO scheduling, deadlines, and adapter-neutral tracing without importing livesell code or performing effects. One FastAPI/Uvicorn SideStage application owns the marketplace emulator, SQLite state, and one hardcoded `process_customer_reply()` function; there is no workflow object, registry, or engine. An eligible reply performs one bounded LLM analysis request, deterministic evidence retrieval, and one registered M3A reply-agent request before application-owned brokering and effects. The debugger renders signals emitted around these exact component calls rather than a separately hardcoded workflow projection.
+**Architecture:** A domain-neutral in-process Python `StaticAgentCore` owns one-request-per-run model invocation, immutable startup profile registration, static terminal-call validation, bounded FIFO scheduling, deadlines, and adapter-neutral tracing without importing livesell code or performing effects. One FastAPI/Uvicorn SideStage application owns the marketplace emulator, SQLite state, and one hardcoded `process_customer_reply()` function; there is no generic workflow object, user-authored registry, or engine. The function dispatches through one of two closed registered paths: one approved-template call, or an evidence-planning call followed by deterministic retrieval and one registered drafting call. M3B.5 adds a closed startup workflow/model catalog and an in-memory per-show debugger selection over immutable entries. The debugger renders signals emitted around the exact component calls rather than a separately hardcoded workflow projection.
 
 **Tech Stack:** Python, `uv`, FastAPI, Uvicorn, Pydantic, SQLite WAL/FTS5, Server-Sent Events, static HTML/CSS/JavaScript, Pytest, HTTPX, and a small Playwright browser suite.
 
@@ -41,7 +41,7 @@ The first runtime gate to execute—M2.1 or M3A.1—creates the neutral `uv`/Pyt
 | M1 — P0 Presentation Data | 2 | Three seller personas and prepared chat data validated as static artifacts |
 | M2 — Marketplace Emulator | 5 | Reviewed marketplace UX, typed fixture import plus runtime import diagnosis and visual data projection, and the complete non-AI livesell UI with five authoritative operations, receipts, and supported compensation |
 | M3A — General Static Agent Harness | 4 | Isolated one-request-per-run core, public immutable startup registration, strict terminal contract, deterministic harness, and separately labeled core latency evidence |
-| M3B — Hardcoded Livesell Reply Copilot | 6 | Original M3.1-M3.4 livesell behavior, R2/R3 safety, debugger, end-to-end evaluation, and reviewer-ready evidence |
+| M3B — Hardcoded Livesell Reply Copilot | 6 | Original M3.1-M3.4 livesell behavior, R2/R3 safety, per-show Optimization and Debug Session selection over closed startup registrations, end-to-end evaluation, and reviewer-ready evidence |
 
 Marketplace operations are completed in Milestone 2. M3B reads their authoritative state but never duplicates their logic or grants the model marketplace authority. M3A imports neither marketplace implementation nor M1/M2 fixtures.
 
@@ -769,7 +769,7 @@ M3A completion permits M3B to consume the reviewed public core API and register 
    - Exclude prior chat, model output, R3 state, and oracle labels from both task projections.
    - Preserve evidence source, version, timestamp, and provenance.
 4. Trace spine:
-   - Implement the MVP order directly in `process_customer_reply(raw_event, services)`; do not introduce a workflow object, workflow registry, stage executor, plugin mechanism, or generic DAG abstraction.
+   - Implement the MVP order directly in `process_customer_reply(raw_event, services)`; do not introduce a workflow object, user-authored workflow registry, stage executor, plugin mechanism, or generic DAG abstraction. M3B.5 may add only the closed selector over these two explicit branches.
    - Wrap the exact eight component calls/branches in `TraceRecorder` spans: ingest, normalize/deduplicate, deterministic route, strategy-specific evidence planning, evidence retrieval/snapshot, registered agent decision/rendering, broker/guardrails, and result.
    - Emit `started` plus exactly one `completed`, `failed`, `exited`, or `skipped` terminal observation from each stage invocation. Record downstream stages as `skipped` after the first blocking or exiting stage.
    - Correlate the registered M3A run beneath livesell stage 6 and record required component/trace/analysis/agent/profile/snapshot IDs, UTC stage timestamp, monotonic `duration_ms`, sanitized references, verdict, and reason code.
@@ -929,15 +929,19 @@ uv run python -m sidestage.trace.evaluator --scenario fixtures/scenarios/safety_
 
 **Review evidence:** Scripted evaluator JSON, debugger captures for success/abstention/injection/race, failing-seed replay, and tests.
 
-## M3B.5 — Paired strategy/model pressure, latency accounting, and release implementation
+## M3B.5 — Optimization and Debug Session
 
-> Status: both deterministic workflow implementations, the provider/strategy-aware live factory, the OpenRouter fallback-disabled transport, sanitized usage/routing accounting, and the paired pressure strategy flag are committed in `7d6c349` and `6ba208a`; their deterministic behavior is `Verified`, but the live release gate remains open. The scripted one-call 360-event diagnostic makes 135 model requests, supports 72/72 answerable parents, and retains zero route mismatches and every hard invariant. The pre-commit live matrix favors one-call Luna over two-call Luna but has no passing release cell: 66/72 and 3,414.37 ms p95 versus 54/72 and 4,530.28 ms. Fallback-disabled DeepSeek and Kimi OpenRouter cells both exceeded five seconds p95 with extensive hard timeouts. All live cells remain pre-commit diagnostics, not `Measured` evidence.
+> Status: the existing deterministic workflows, live factory, OpenRouter transport, latency accounting, and pressure evaluator are `Verified` at `7d6c349` and `6ba208a`. The debugger-controlled per-show workflow/model selector described below is `Accepted`, not yet `Implemented`. The live release gate remains open. The pre-commit matrix favors one-call Luna over two-call Luna but has no passing cell: 66/72 and 3,414.37 ms p95 versus 54/72 and 4,530.28 ms. Fallback-disabled DeepSeek and Kimi OpenRouter cells both exceeded five seconds p95 with extensive hard timeouts. All live cells remain pre-commit diagnostics, not `Measured` evidence.
+
+**Purpose:** Turn the existing pressure harness and persisted debugger into a controlled optimization session. A developer can compare approved workflow and model combinations on one active synthetic seller/show without restarting the server. The selection affects the real reply pipeline—including normal R2 cards and broker-authorized R3 replies—but never grants new authority, edits runtime definitions, or changes already accepted work. The detailed boundary is recorded in the [Optimization and Debug Session design](2026-08-18-optimization-debug-session-design.md).
 
 **Files**
 
 - Create: `src/sidestage/copilot/templates.py`.
+- Create: a bounded runtime catalog/selection module under `src/sidestage/copilot/` for immutable startup registrations and per-show session state.
 - Extend: reply contracts/profile/retrieval/pipeline/broker, compatible provider routing metadata, queue/deadline instrumentation, evaluator, and golden-demo support.
-- Test: `tests/integration/test_latency_accounting.py`, `tests/integration/test_live_app_factory.py`, `tests/e2e/test_golden_demo.py`.
+- Extend: `src/sidestage/app.py`, question/trace/reply-receipt persistence, snapshot/SSE projection, `web/static/debug.html`, `debugger.js`, marketplace header markup, and styles.
+- Test: `tests/integration/test_latency_accounting.py`, `tests/integration/test_live_app_factory.py`, a new runtime-selection integration suite, `tests/e2e/test_debugger.py`, `tests/e2e/test_golden_demo.py`, and marketplace badge coverage.
 - Update implementation commands in `README.md` only after they work; do not yet claim final measured values.
 
 **RED test groups**
@@ -962,22 +966,40 @@ uv run python -m sidestage.trace.evaluator --scenario fixtures/scenarios/safety_
    - Record prompt/completion/reasoning/cache tokens and cost when OpenRouter returns them. Missing usage may be reported as unavailable; a missing resolved provider or any fallback invalidates model comparison.
    - Use identical generated events, seed, timeout, queue/concurrency configuration, and SLO denominator for every strategy/model cell. First screen with latency-sorted provider selection, then pin the provider for finalists.
 5. Reviewer live factory:
-   - `create_live_app()` fails before database initialization when provider, strategy, matching exported credential, or model ID is missing, builds one shared strict runner when configured, stores no credential in application state/metadata, and closes its owned HTTP client at shutdown.
+   - `create_live_app()` fails before database initialization when the startup model allowlist, default selection, matching exported credentials, or any configured compatibility declaration is missing or invalid. It builds reusable strict runners for approved entries, stores no credential in application state/metadata, and closes owned HTTP clients at shutdown.
    - `create_app()` remains the credential-free deterministic injection factory and must not silently pretend to be live.
 6. Approved-template release challenger:
    - Register the closed fifteen-terminal catalog defined in the TDD. The model selects a template and only its minimal semantic argument; it cannot provide reply text or factual values.
    - Application code renders versioned R2/R3 text from trusted evidence. Exact variant selection is validated against current snapshot records.
    - Unsupported, ambiguous, stale, conflicting, invalid, or unrepresented selections become `Needs seller` or `no_response`; no challenger outcome invokes the baseline.
+7. Closed startup registration:
+   - Register both approved workflows before chat acceptance; do not introduce a general workflow engine, plugin interface, or runtime agent mutation.
+   - Load a server-side allowlist of named model profiles containing provider, exact requested model ID, reasoning setting, timeout, sanitized configuration reference, and supported workflows. Credentials remain server-only.
+   - Reject duplicate public IDs, missing or mismatched credentials, unknown workflows, invalid profiles, and unsupported workflow/model pairs before database initialization.
+   - Build reusable immutable runners and workflow handles without making a provider call during a debugger switch.
+8. Per-show debugger selection and execution pinning:
+   - Expose independent workflow/model selectors only in the authenticated debugger for one seller/show. Disable incompatible pairs in the browser and reject them again on the server.
+   - A successful switch atomically increments an in-memory per-show selection version. It is session-only and resets to startup defaults after process restart or show recreation.
+   - Chat acceptance pins workflow ID, model-profile ID, requested model, configuration reference, and selection version. Queued and in-flight questions finish under that immutable selection; only later accepted chat sees the switch.
+   - Resolve one of the two hardcoded workflow branches from the pinned catalog entry. Missing or incompatible entries fail closed before provider work; no stage may mix selections.
+   - Preserve the existing broker, R2/R3 authorization, freshness, canonical uniqueness, and receipt transaction. Debugger selection may exercise full runtime behavior but gains no additional effect authority.
+9. Surfaces, attribution, and comparison metrics:
+   - Show current workflow/model as a read-only badge in the seller marketplace. The debugger owns the controls and displays public catalog metadata and selection version.
+   - Persist the pinned public selection identity on question execution metadata, every trace, Inbox card, reply receipt, and SSE projection. Add resolved provider/model and routing attempts when known; never persist credentials.
+   - Mark the first model-backed request after each selection version as `cold`; noise and duplicate no-call paths do not consume the marker. Mark later model-backed requests `steady`.
+   - Report cold samples, steady-state p50/p95/maximum, and combined p50/p95/maximum per workflow/model pair. The switch action itself is outside the reply SLO, but every accepted question retains the unchanged acceptance-to-publication boundary.
+   - Prove a switch event and later response cannot let an older SSE snapshot overwrite the current marketplace badge.
 
 **Focused commands before review**
 
 ```bash
 uv run pytest tests/integration/test_latency_accounting.py tests/e2e/test_golden_demo.py -q
 uv run pytest tests/integration/test_live_app_factory.py -q
+uv run pytest tests/integration/test_runtime_selection.py tests/e2e/test_debugger.py tests/e2e/test_marketplace_ui.py -q
 uv run --env-file .env python -m sidestage.trace.evaluator --scenario fixtures/scenarios/pressure_v1.json --seed 20260817 --model live --strategy one_call_template --output runs/exploratory/openrouter_candidate_one_call.json
 ```
 
-**Implementation review gate:** Deterministic tests pass for both strategies and the golden flow works on the selected configuration. The builder approved the implementation commits while keeping the failed live scorecard explicit; those commits do not close M3B.5 or create `Measured` evidence.
+**Implementation review gate:** Both workflow/model selectors expose only startup-approved compatible values; per-show switches are atomic and session-only; in-flight work remains pinned; full R2/R3 behavior retains the same broker authority; marketplace/debugger projections converge; and cold, steady-state, and combined metrics are separated without changing the release denominator. Existing commits verify the underlying workflows but do not satisfy this new gate or close M3B.5.
 
 **Current gate evidence:** The exact commit-bound command `.venv/bin/pytest -q` passes at code head `6ba208a` with `288 passed, 4 deselected in 43.52s`. The fixed-seed pre-commit direct-OpenAI Luna comparison favors the challenger: `one_call_template` reached 66/72 broker-accepted grounded suggestions, zero hard timeouts, and 3,414.37 ms all-event workload p95, compared with 54/72, 14 hard timeouts, and 4,530.28 ms for `two_call_draft`. The one-call result still falls short of the 69/72 needed to clear the 95% coverage gate and misses the two-second latency target; queue p95 was 1,548.33 ms and 18/135 requests ended as provider errors. Expected-template/evidence semantic accuracy and eligible-question-only p95 are not yet reported, so these values cannot be promoted to final answer-quality or product-SLO measurements. Fallback-disabled OpenRouter cells resolved DeepSeek V4 Flash to Inceptron and Kimi K3 to Together. They reached 7/72 and 17/72 supported answers respectively, with 88 and 87 hard timeouts and 5,022.01 ms and 5,024.85 ms p95. GLM 5.2 did not pass the strict compatibility smoke after the shared transport correction and was not pressure-tested. Safety/no-effect scorecards remained intact, but no live cell passes quality and latency together; workload and queue time remain unchanged and included.
 

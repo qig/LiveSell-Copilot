@@ -354,6 +354,15 @@ Each entry must identify the proposal, disposition, reason, chosen alternative, 
 - **Implication:** `OPENROUTER_API_KEY` and `OPENAI_API_KEY` remain provider-specific secrets. A fallback, missing resolved provider, strategy mismatch, or changed workload digest invalidates a comparison cell rather than being normalized into the scorecard.
 - **Evidence:** Builder benchmark decision conversation, 2026-08-18; OpenRouter provider-routing, metadata, and usage-accounting documentation.
 
+### APR-039 — Keep workflow and model selection fixed for the process lifetime
+
+- **Disposition:** Explicitly superseded and narrowly reopened for developer evaluation.
+- **Decision source:** Builder-approved Optimization and Debug Session design on 2026-08-18.
+- **Reason:** Restarting the live server for every workflow/model comparison makes interactive optimization cumbersome and disconnects the selected configuration from the seller marketplace and persisted debugger traces. The debugger needs to compare approved combinations against the real R2/R3 path while preserving exact configuration attribution.
+- **Chosen alternative:** Register both closed workflows and a server-side allowlist of model profiles before chat acceptance. Let the authenticated debugger independently select only compatible workflow/model pairs for one seller/show. Store the active override only in memory, pin its immutable version when each question is accepted, and let in-flight work finish under its original selection. The marketplace shows the active selection read-only. The first model-backed request after a switch is reported as cold; later requests are steady-state, and the combined distribution retains both.
+- **Implication:** APR-034's rejection of a general workflow engine, user-authored registry, plugin mechanism, and dynamic agent mutation remains in force. Runtime selection resolves only prebuilt immutable handles and never edits prompts, schemas, tools, credentials, templates, or effect authority. Debug-selected runs may exercise normal R2 and broker-authorized R3 behavior, but the same freshness, uniqueness, receipt, and kill-switch checks apply. The extension is `Accepted`, not yet `Implemented` or `Measured`.
+- **Evidence:** Builder design conversation, 2026-08-18.
+
 ## Entry template
 
 ```md
