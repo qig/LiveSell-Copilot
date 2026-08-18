@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="SideStage Milestone 2 synthetic developer ledger" />
+    <title>SideStage — Developer ledger</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./debugger.js" defer></script>
+  </head>
+  <body class="debug-body">
+    <a class="skip-link" href="#debug-main">Skip to ledger</a>
+    <div class="ambient-grid" aria-hidden="true"></div>
+
+    <header class="global-header debug-header">
+      <a class="wordmark" href="./index.html" aria-label="Return to SideStage seller workspace">
+        <span class="wordmark-mark" aria-hidden="true">S</span>
+        <span class="wordmark-type">
+          <strong>SideStage</strong>
+          <small>developer ledger</small>
+        </span>
+      </a>
+
+      <div class="header-readout debug-session">
+        <span>Inspectable state</span>
+        <strong id="debug-seller">No seller state</strong>
+      </div>
+
+      <div class="header-statuses">
+        <div class="status-chip status-chip--muted"><span>Read only</span><span class="status-suffix">M2</span></div>
+        <button class="button button--quiet" id="refresh-ledger" type="button">Refresh</button>
+        <a class="button button--paper" href="./index.html">Seller workspace</a>
+      </div>
+    </header>
+
+    <main class="debug-main" id="debug-main">
+      <header class="debug-intro">
+        <div>
+          <p class="eyebrow">Internal evidence surface</p>
+          <h1>What changed—and in what order.</h1>
+          <p class="debug-lede">
+            Browser-adapter projections for UI inspection only. This is not the future SQLite audit ledger or SSE trace store.
+          </p>
+        </div>
+        <div class="debug-active-readout">
+          <span>Active cue</span>
+          <strong id="debug-active-sku">Stage clear</strong>
+          <small id="debug-show-id">—</small>
+        </div>
+      </header>
+
+      <section class="debug-stats" aria-label="Current state summary">
+        <article>
+          <span>Show version</span>
+          <strong id="stat-show-version">0</strong>
+        </article>
+        <article>
+          <span>Raw chat events</span>
+          <strong id="stat-event-count">0</strong>
+        </article>
+        <article>
+          <span>Listing epochs</span>
+          <strong id="stat-epoch-count">0</strong>
+        </article>
+        <article>
+          <span>Operation receipts</span>
+          <strong id="stat-receipt-count">0</strong>
+        </article>
+      </section>
+
+      <nav class="ledger-tabs" aria-label="Ledger sections">
+        <button class="ledger-tab is-active" data-ledger-tab="events" type="button">
+          Raw events <span id="tab-event-count">0</span>
+        </button>
+        <button class="ledger-tab" data-ledger-tab="epochs" type="button">
+          Listing epochs <span id="tab-epoch-count">0</span>
+        </button>
+        <button class="ledger-tab" data-ledger-tab="receipts" type="button">
+          Receipts <span id="tab-receipt-count">0</span>
+        </button>
+      </nav>
+
+      <section class="ledger-panel is-active" id="ledger-events" data-ledger-panel="events" aria-labelledby="events-title">
+        <div class="ledger-heading">
+          <div>
+            <p class="eyebrow">Replay projection</p>
+            <h2 id="events-title">Chronological chat</h2>
+          </div>
+          <span>Raw text preserved</span>
+        </div>
+        <div class="ledger-list" id="event-ledger"></div>
+      </section>
+
+      <section class="ledger-panel" id="ledger-epochs" data-ledger-panel="epochs" aria-labelledby="epochs-title" hidden>
+        <div class="ledger-heading">
+          <div>
+            <p class="eyebrow">Temporal state</p>
+            <h2 id="epochs-title">Listing epoch history</h2>
+          </div>
+          <span>Append only</span>
+        </div>
+        <div class="epoch-timeline" id="epoch-ledger"></div>
+      </section>
+
+      <section class="ledger-panel" id="ledger-receipts" data-ledger-panel="receipts" aria-labelledby="receipts-title" hidden>
+        <div class="ledger-heading">
+          <div>
+            <p class="eyebrow">Action audit projection</p>
+            <h2 id="receipts-title">Operation receipts</h2>
+          </div>
+          <span>Applied · rejected · compensated</span>
+        </div>
+        <div class="receipt-ledger" id="receipt-ledger"></div>
+      </section>
+    </main>
+
+    <div class="debug-empty" id="debug-empty" hidden>
+      <span>00</span>
+      <h2>No synthetic show state yet.</h2>
+      <p>Open the seller workspace and perform an operation or add a chat message.</p>
+      <a class="button button--signal" href="./index.html">Open seller workspace</a>
+    </div>
+  </body>
+</html>

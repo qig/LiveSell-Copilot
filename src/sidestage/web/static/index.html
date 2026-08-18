@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="SideStage Milestone 2 synthetic live-selling marketplace workspace"
+    />
+    <title>SideStage — Marketplace emulator</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app.js" defer></script>
+  </head>
+  <body class="seller-body">
+    <a class="skip-link" href="#workspace">Skip to workspace</a>
+
+    <div class="ambient-grid" aria-hidden="true"></div>
+
+    <header class="global-header">
+      <a class="wordmark" href="./index.html" aria-label="SideStage seller workspace">
+        <span class="wordmark-mark" aria-hidden="true">S</span>
+        <span class="wordmark-type">
+          <strong>SideStage</strong>
+          <small>seller control room</small>
+        </span>
+      </a>
+
+      <div class="session-identity">
+        <label class="compact-field" for="seller-select">
+          <span>Seller</span>
+          <select id="seller-select" aria-label="Synthetic seller">
+            <option>Loading fixtures…</option>
+          </select>
+        </label>
+
+        <div class="header-readout">
+          <span>Show</span>
+          <strong id="show-id">—</strong>
+        </div>
+      </div>
+
+      <div class="header-statuses" aria-label="Show status">
+        <div class="status-chip status-chip--live" id="stream-chip">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="stream-status">Room ready</span>
+        </div>
+        <div class="status-chip status-chip--muted">
+          <span>Copilot off</span>
+          <span class="status-suffix">M2</span>
+        </div>
+        <a class="icon-link" href="./debug.html" aria-label="Open developer ledger">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" />
+          </svg>
+          <span>Ledger</span>
+        </a>
+      </div>
+    </header>
+
+    <main class="workspace" id="workspace">
+      <section class="surface chat-surface" aria-labelledby="live-room-title">
+        <header class="surface-header">
+          <div>
+            <p class="eyebrow"><span class="live-pip" aria-hidden="true"></span> Live room</p>
+            <h1 id="live-room-title">Every message, in order.</h1>
+          </div>
+          <div class="count-readout" aria-label="Accepted chat event count">
+            <strong id="event-count">00</strong>
+            <span>accepted</span>
+          </div>
+        </header>
+
+        <div class="stream-toolbar" aria-label="Prepared chat controls">
+          <div class="stream-primary-controls">
+            <button class="button button--signal" id="toggle-stream" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              <span>Play fixture</span>
+            </button>
+            <button class="button button--quiet" id="step-stream" type="button">Next</button>
+            <button class="button button--quiet" id="burst-stream" type="button">Burst ×8</button>
+          </div>
+          <span class="toolbar-note">Synthetic input · chronological</span>
+        </div>
+
+        <div class="chat-feed" id="chat-feed" aria-live="polite" aria-relevant="additions">
+          <div class="feed-empty" id="feed-empty">
+            <span class="empty-index">00</span>
+            <div>
+              <strong>The room is quiet.</strong>
+              <p>Play the prepared fixture or enter a custom buyer message below.</p>
+            </div>
+          </div>
+        </div>
+
+        <form class="chat-composer" id="chat-form">
+          <label for="chat-input">
+            <span>Custom buyer message</span>
+            <small>Uses the same synthetic ingestion path</small>
+          </label>
+          <div class="composer-row">
+            <input
+              id="chat-input"
+              name="message"
+              type="text"
+              maxlength="240"
+              autocomplete="off"
+              placeholder="Ask about the pair on stage…"
+              required
+            />
+            <button class="send-button" type="submit">
+              <span>Send</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m5 12 14-7-4 14-3-5-7-2Zm7 2 7-9" />
+              </svg>
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section class="surface show-surface" aria-labelledby="show-desk-title">
+        <header class="surface-header show-surface-header">
+          <div>
+            <p class="eyebrow">Show desk</p>
+            <h2 id="show-desk-title">Current cue</h2>
+          </div>
+          <div class="cue-readout">
+            <span>Active SKU</span>
+            <strong id="active-sku">Stage clear</strong>
+          </div>
+        </header>
+
+        <article class="active-cue" id="active-cue" aria-live="polite">
+          <div class="cue-loading">
+            <span class="loading-rule"></span>
+            <span class="loading-rule loading-rule--short"></span>
+          </div>
+        </article>
+
+        <section class="operation-section" aria-labelledby="operation-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Seller authority</p>
+              <h3 id="operation-title">Marketplace controls</h3>
+            </div>
+            <span class="section-note">Typed · version checked</span>
+          </div>
+
+          <div class="operation-dock" id="operation-dock">
+            <button class="operation-button" data-operation="push" type="button">
+              <span class="operation-index">01</span>
+              <strong>Push</strong>
+              <small>Fill empty slot</small>
+            </button>
+            <button class="operation-button" data-operation="swap" type="button">
+              <span class="operation-index">02</span>
+              <strong>Swap</strong>
+              <small>Change active pair</small>
+            </button>
+            <button class="operation-button operation-button--danger" data-operation="unlist" type="button">
+              <span class="operation-index">03</span>
+              <strong>Unlist</strong>
+              <small>Clear active slot</small>
+            </button>
+            <button class="operation-button" data-operation="price_markdown" type="button">
+              <span class="operation-index">04</span>
+              <strong>Mark down</strong>
+              <small>Lower current price</small>
+            </button>
+            <button class="operation-button" data-operation="inventory_change" type="button">
+              <span class="operation-index">05</span>
+              <strong>Inventory</strong>
+              <small>Set variant stock</small>
+            </button>
+          </div>
+        </section>
+
+        <section class="catalog-section" aria-labelledby="catalog-title">
+          <div class="section-heading section-heading--catalog">
+            <div>
+              <p class="eyebrow">Catalog rail</p>
+              <h3 id="catalog-title">Choose the next cue</h3>
+            </div>
+            <span class="section-note" id="catalog-note">Select a pair for Push</span>
+          </div>
+          <div class="catalog-rail" id="catalog-rail" role="list"></div>
+        </section>
+
+        <div class="undo-bar" id="undo-bar" hidden>
+          <div>
+            <span class="undo-label">Latest change</span>
+            <strong id="undo-summary">—</strong>
+          </div>
+          <button class="button button--undo" id="undo-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 8 5 12l4 4M6 12h7a5 5 0 1 1 0 10" />
+            </svg>
+            Undo
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="workspace-footer">
+      <p><span>Synthetic demo state</span> Browser adapter · no AI or customer commerce</p>
+      <button class="text-button" id="reset-demo" type="button">Reset this seller show</button>
+    </footer>
+
+    <dialog class="operation-dialog" id="operation-dialog">
+      <form method="dialog" id="operation-form">
+        <div class="dialog-kicker">
+          <span id="dialog-index">01</span>
+          <span>Seller operation</span>
+        </div>
+        <button class="dialog-close" value="cancel" aria-label="Close operation dialog" type="submit">×</button>
+        <h2 id="dialog-title">Push listing</h2>
+        <p id="dialog-description">Choose an available listing to put on stage.</p>
+        <div class="dialog-fields" id="dialog-fields"></div>
+        <p class="dialog-error" id="dialog-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button class="button button--quiet" value="cancel" type="submit">Cancel</button>
+          <button class="button button--signal" id="dialog-confirm" value="default" type="submit">Confirm</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="notice" id="notice" role="status" aria-live="polite" hidden>
+      <span class="notice-mark" aria-hidden="true"></span>
+      <div>
+        <strong id="notice-title">Change applied</strong>
+        <p id="notice-message">The active listing was updated.</p>
+      </div>
+      <button id="notice-close" type="button" aria-label="Dismiss notice">×</button>
+    </div>
+
+    <template id="product-art-template">
+      <div class="product-art" aria-hidden="true">
+        <span class="product-art-orbit"></span>
+        <span class="product-art-sole"></span>
+        <span class="product-art-upper"></span>
+        <span class="product-art-code"></span>
+      </div>
+    </template>
+  </body>
+</html>
