@@ -37,6 +37,13 @@ from sidestage.agent_core.terminal import (
     TerminalResponseError,
     decode_terminal_response,
 )
+from sidestage.agent_core.trace import (
+    CoreTraceEvent,
+    CoreTraceEventType,
+    InMemoryTraceSink,
+    NullTraceSink,
+    TraceSink,
+)
 
 __all__ = [
     "AgentProfile",
@@ -47,14 +54,18 @@ __all__ = [
     "AgentTaskValidationError",
     "CoreFailure",
     "CoreFailureCode",
+    "CoreTraceEvent",
+    "CoreTraceEventType",
     "DeadlinePolicy",
     "LatencyBreakdown",
+    "InMemoryTraceSink",
     "ModelInvocation",
     "ModelRequestProjection",
     "ModelResponse",
     "ModelRunner",
     "ModelRunnerError",
     "ModelTerminalCall",
+    "NullTraceSink",
     "OpenAICompatibleModelConfig",
     "OpenAICompatibleModelRunner",
     "QueuePolicy",
@@ -65,6 +76,7 @@ __all__ = [
     "TerminalIntent",
     "TerminalResponseError",
     "TerminalToolSchema",
+    "TraceSink",
     "UnknownAgentProfileError",
     "decode_terminal_response",
     "register_profile",
