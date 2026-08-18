@@ -1,0 +1,660 @@
+# SideStage Debugging Process and Evidence Log
+
+> Status: Active engineering process and interview evidence log
+>
+> Last updated: 2026-08-18
+>
+> Milestone 2 evidence target: `734d151`
+>
+> Retained evidence artifact: `docs/evidence/m2-closeout.md`
+
+This is a contemporaneous engineering journal and interview aid. Record observed failures while they happen; do not manufacture plausible debugging stories after the build.
+
+## 1. Debugging method
+
+For every material failure:
+
+1. Preserve the failing input, tenant, seed, trace identifier, and current commit.
+2. Write the expected and observed behavior before changing code.
+3. Capture the exact reproduction command and smallest deterministic fixture.
+4. Inspect stage traces to identify the first incorrect transition rather than the final symptom.
+5. List competing hypotheses and the evidence that eliminates them.
+6. Make the smallest scoped fix.
+7. Add or update a regression test before declaring the issue resolved.
+8. Run the focused test, relevant suite, and end-to-end reproduction.
+9. Record remaining uncertainty and the 60-second explanation for the interview.
+
+## 2. Reproduction baseline
+
+Populate these fields as soon as commands exist:
+
+| Item | Exact value |
+| --- | --- |
+| End-to-end live run command | `uv run uvicorn sidestage.app:create_live_app --factory --host 127.0.0.1 --port 8000` after exporting the required model environment |
+| Full test command | `uv run pytest -q` |
+| Pressure-test command | `SIDESTAGE_MODEL_ID=gpt-5.6-luna SIDESTAGE_MODEL_REASONING_EFFORT=none uv run python -m sidestage.trace.evaluator --scenario fixtures/scenarios/pressure_v1.json --seed 20260817 --model live --output runs/exploratory/evaluation_live.json` with `OPENAI_API_KEY` or `SIDESTAGE_MODEL_API_KEY` set outside the command |
+| Deterministic seed | `20260817` for M2 prepared chat and the retained M3A/M3B regression workloads |
+| Environment setup | `uv sync --group dev` and `uv run playwright install chromium` |
+| Trace export location | `/app/debug.html`; `GET /api/debug/copilot?session_token=<opaque-session-token>` for M3B and `GET /api/debug/marketplace?session_token=<opaque-session-token>` for the M2 ledger |
+| Current evidence commit | `734d151` for the complete M2 implementation |
+
+## 3. Issue index
+
+| ID | Status | Summary |
+| --- | --- | --- |
+| DBG-001 | Fixed | M2 browser verification could not start in the default sandbox/Python environment |
+| DBG-002 | Fixed | Native Markdown field validation bypassed the application refusal receipt path |
+| DBG-003 | Fixed | RED-first uv install left the new M2.1 package unavailable to Pytest |
+| DBG-004 | Fixed | Initial listing-condition contract rejected approved consignment records |
+| DBG-005 | Fixed | M2.1 browser assertions confused fixture status with derived UI state |
+| DBG-006 | Fixed | M3A.1 tests constructed profiles outside the strict validation path |
+| DBG-007 | Fixed | Immutable JSON documents exported a misleading string schema |
+| DBG-008 | Fixed | Provider work started after the absolute deadline expired at dispatch |
+| DBG-009 | Fixed | Live-provider HTTP client was closed from a different event loop |
+| DBG-010 | Open | Bare API key exposed by environment-name inspection; rotation remains required |
+| DBG-011 | Fixed | Trace-overhead benchmark rejected strict enum and then under-measured the path |
+| DBG-012 | Fixed | Permissive JSON constants escaped the evaluator's typed error boundary |
+| DBG-013 | Fixed | GPT-5.6 Luna rejected Chat Completions tools at its default reasoning effort |
+| DBG-014 | Fixed | M2.3 reload silently replaced the opaque server session |
+| DBG-015 | Fixed | Runtime debugger sent its placeholder label as an actual-route filter |
+| DBG-016 | Fixed | Product-mention routing helper accidentally ended the router class |
+| DBG-017 | Fixed | Debugger SSE refresh displaced the stage being inspected |
+| DBG-018 | Diagnosed | Two-call Luna pressure missed correctness and latency gates |
+| DBG-019 | Fixed | Documented Uvicorn factory silently used an empty scripted runner |
+| DBG-020 | Fixed | Strict provider schema caused every live analysis request to fail before retrieval |
+
+### DBG-001 — M2 browser verification environment could not launch
+
+- **Date and commit:** 2026-08-17; uncommitted M2 UI working tree
+- **Status:** Fixed
+- **Expected:** Start a repository-root static HTTP server and run the Playwright seller-flow verification against it.
+- **Observed:** The sandboxed server bind failed with `PermissionError: [Errno 1] Operation not permitted`. The approved unsandboxed retry started the server, then the verification process failed with `ModuleNotFoundError: No module named 'playwright'`.
+- **Exact reproduction command:** `python /Users/qiguo/.codex/skills/webapp-testing/scripts/with_server.py --server "python3 -m http.server 8000" --port 8000 -- python tests/e2e/verify_m2_ui.py`
+- **Tenant, fixture, seed, and trace ID:** No tenant selected; browser verification stopped before fixture load; no seed or trace ID.
+- **Log, trace, screenshot, or artifact:** Terminal output retained in the active Codex task; no screenshot was produced.
+- **Impact:** JavaScript syntax and whitespace checks pass, but the required real-browser interaction and visual verification is not yet complete.
+- **Hypotheses considered:** Port collision; incorrect server command; sandbox bind restriction; missing browser automation dependency.
+- **First incorrect pipeline stage:** Browser verification environment setup, before application navigation.
+- **Root cause:** The default sandbox prohibits binding the local test server, and the selected Python interpreter does not have the Playwright package installed.
+- **Fix:** Loaded the bundled workspace runtime, installed Python Playwright only under `/tmp/sidestage-playwright`, ran the local server outside the bind-restricted sandbox, and added a 500 ms settled-state wait before the retained desktop capture so the screenshot does not land inside the intentional cue transition.
+- **Files and functions changed:** `tests/e2e/verify_m2_ui.py`; no product behavior changed while diagnosing.
+- **Verification commands and results:** `node --check src/sidestage/web/static/app.js`, `node --check src/sidestage/web/static/debugger.js`, and `git diff --check` passed. `python /Users/qiguo/.codex/skills/webapp-testing/scripts/with_server.py --server "python3 -m http.server 8765" --port 8765 -- env PYTHONPATH=/tmp/sidestage-playwright SIDESTAGE_BASE_URL=http://127.0.0.1:8765 /Users/qiguo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 tests/e2e/verify_m2_ui.py` passed and produced three screenshots under `/tmp/sidestage-m2-ui`.
+- **Regression test:** `tests/e2e/verify_m2_ui.py` passed in headless Chromium.
+- **Remaining risk:** The UI still runs over the explicitly labeled browser adapter; FastAPI, SQLite, authority, idempotency, concurrent-write, and SSE behavior remain M2 backend work.
+- **What I personally did:** Inspected the listening port, reproduced the sandbox bind failure directly, retried with approved local-server permission, and isolated the missing Python package.
+- **What AI suggested:** Use the repository skill's server lifecycle helper and a native Python Playwright flow.
+- **What I rewrote or rejected:** Did not bypass browser verification with DOM-only assertions or claim screenshots that do not exist.
+- **60-second interview explanation:** The first M2 UI verification failed before the application loaded. Direct reproduction separated two environment problems: sandboxed socket binding and a Python interpreter without Playwright. I kept the incident open, installed Playwright only in a temporary directory, reran the same flow outside the sandbox, and inspected the resulting desktop, developer-ledger, and mobile captures. The browser flow then passed with no console or page errors.
+
+### DBG-002 — Native Markdown validation bypassed audited refusal
+
+- **Date and commit:** 2026-08-17; uncommitted M2 UI working tree
+- **Status:** Fixed
+- **Expected:** Submitting a Markdown below the seller floor reaches the operation handler, leaves price unchanged, shows the exact refusal, and appends a `status=rejected` Price Markdown receipt.
+- **Observed:** The browser's native `min` constraint stopped form submission before `executeOperation`, so the dialog stayed open with no application error and no refusal receipt.
+- **Exact reproduction command:** `python /Users/qiguo/.codex/skills/webapp-testing/scripts/with_server.py --server "python3 -m http.server 8765" --port 8765 -- env PYTHONPATH=/tmp/sidestage-playwright SIDESTAGE_BASE_URL=http://127.0.0.1:8765 /Users/qiguo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 tests/e2e/verify_m2_ui.py`
+- **Tenant, fixture, seed, and trace ID:** VelocityKicks; `VK-CP-SC-002`; no scenario seed or backend trace ID in the browser adapter.
+- **Log, trace, screenshot, or artifact:** Playwright assertion output showed an empty hidden `#dialog-error` while the price input remained at `1`.
+- **Impact:** A policy-invalid seller attempt was blocked visually but was not represented in the UI adapter's developer receipt projection.
+- **Hypotheses considered:** Wrong dialog event listener; integer-cent conversion error; floor lookup error; native HTML constraint preventing submit.
+- **First incorrect pipeline stage:** Browser form submission, before application parameter validation.
+- **Root cause:** The Markdown input encoded the seller floor in native `min`, duplicating the policy check and preventing the application-owned rejection path from running.
+- **Fix:** Retained only the generic positive-price input constraint and let `executeOperation` enforce current price and seller floor so the refusal is recorded. Tightened the Playwright Cancel selector after its first rerun matched both the icon close and named Cancel buttons.
+- **Files and functions changed:** `src/sidestage/web/static/app.js` in `dialogFields`; `tests/e2e/verify_m2_ui.py` refusal case.
+- **Verification commands and results:** The expanded browser command passed. It submitted `$1`, asserted the seller-floor error and unchanged `$145` price, navigated to the developer ledger, and found a visible `rejected` receipt. JavaScript syntax and `git diff --check` also passed in the same command.
+- **Regression test:** `tests/e2e/verify_m2_ui.py` now submits `$1`, asserts the seller-floor error and unchanged active price, then asserts the rejected receipt in the developer ledger.
+- **Remaining risk:** The browser adapter demonstrates UI refusal behavior only; durable backend audit ordering and failure semantics remain M2 kernel work.
+- **What I personally did:** Expanded the happy-path browser test to include a policy refusal and used the rendered accessibility snapshot to identify that the form never reached application code.
+- **What AI suggested:** Move policy enforcement to the typed operation boundary while leaving only generic numeric validity in HTML.
+- **What I rewrote or rejected:** Rejected weakening the test to accept native validation because M2 explicitly requires audited refusals.
+- **60-second interview explanation:** A new negative browser test found that duplicating the seller floor in HTML looked safe but bypassed the application audit path. The browser rejected `$1` before JavaScript ran. I moved the business constraint back to the typed operation handler, reran the browser flow, and confirmed the price remained `$145` while a rejected receipt appeared in the ledger. Invalid attempts are now no-op but observable, which is the behavior the M2 safety contract requires.
+
+### DBG-003 — RED-first uv install left the M2.1 package unavailable
+
+- **Date and commit:** 2026-08-17; uncommitted M2.1 working tree
+- **Status:** Fixed
+- **Expected:** After writing the M2.1 implementation, the unchanged focused command would move from the intended missing-module RED failure to contract execution.
+- **Observed:** `uv run pytest tests/unit/test_domain_contracts.py tests/unit/test_seller_import.py -q` still failed collection with `ModuleNotFoundError: No module named 'sidestage'` after the source package existed.
+- **Exact reproduction command:** `uv run pytest tests/unit/test_domain_contracts.py tests/unit/test_seller_import.py -q`
+- **Tenant, fixture, seed, and trace ID:** No seller was loaded; collection failed before fixture import.
+- **First incorrect pipeline stage:** Test-environment package discovery.
+- **Root cause:** The RED run built and installed the project before `src/sidestage/__init__.py` existed, leaving an empty installed artifact in the uv environment. The test command had no explicit `src` discovery fallback.
+- **Fix:** Added `pythonpath = ["src"]` to the repository Pytest configuration. The next uv run also rebuilt the project after the `pyproject.toml` change.
+- **Files and functions changed:** `pyproject.toml` Pytest configuration.
+- **Verification commands and results:** The focused command collected the M2.1 tests and advanced to two real data-contract failures; after the separate condition fix, all 24 tests passed.
+- **Regression test:** The documented focused command now imports the source tree deterministically after a RED-first setup.
+- **Remaining risk:** Normal runtime imports still rely on the packaged project; the wheel is built in every clean `uv sync`/`uv run` environment and was rebuilt successfully in this environment.
+- **60-second interview explanation:** Running RED before the package existed created an unusual local state: uv had installed an empty project artifact, so adding source files did not make Pytest import them. I kept the command unchanged and made test discovery explicit through the standard `src` layout. That turned an environment failure into the actual contract failures the suite was meant to expose.
+
+### DBG-004 — Approved consignment listings failed typed import
+
+- **Date and commit:** 2026-08-17; uncommitted M2.1 working tree
+- **Status:** Fixed
+- **Expected:** `fixtures/sellers.json` imports byte-for-value into immutable typed records.
+- **Observed:** The loader rejected two VaultConsign products because `ListingCondition` allowed only `new` and `used`, while the approved records use `consignment`.
+- **Exact reproduction command:** `uv run pytest tests/unit/test_domain_contracts.py tests/unit/test_seller_import.py -q`
+- **Tenant, fixture, seed, and trace ID:** `sel_vault_consign`; the two consignment listings in the committed seller fixture; no scenario seed or trace ID.
+- **First incorrect pipeline stage:** Pydantic listing validation during fixture import.
+- **Root cause:** The initial model vocabulary was inferred from the first sample records rather than enumerated across the complete approved fixture.
+- **Fix:** Expanded `ListingCondition` to exactly `new | used | consignment`; the fixture remained unchanged.
+- **Files and functions changed:** `src/sidestage/domain/models.py`, `ListingCondition`.
+- **Verification commands and results:** The focused M2.1 suite passed: `24 passed in 0.09s`. The round-trip test proves the typed document dumps back to the exact source values.
+- **Regression test:** `test_imports_exact_approved_sellers_without_changing_source_values` loads every product and compares the entire JSON projection.
+- **Remaining risk:** Any future listing condition must be an explicit contract change rather than silently accepted free text.
+- **60-second interview explanation:** The first typed import rejected valid consignment inventory because I modeled conditions from an incomplete sample. I did not rewrite the fixture or loosen the field to arbitrary text. I enumerated the approved third value and kept the closed vocabulary, then used the full-document round-trip test to prove every seller record imports unchanged.
+
+### DBG-005 — Browser projection asserted source status instead of UI state
+
+- **Date and commit:** 2026-08-17; uncommitted M2.1 working tree
+- **Status:** Fixed
+- **Expected:** The inherited browser flow validates all three seller catalogs, a prepared event, a custom event, active price/stock/policy, and the existing M2.0 interaction flow.
+- **Observed:** The first run expected every source-`available` catalog card to display `Available`, but the UI correctly labels the default pending Push target `Selected`. After that correction, the developer ledger correctly contained two raw events while the old M2.0 assertion still expected one.
+- **Exact reproduction command:** `SIDESTAGE_BASE_URL=http://127.0.0.1:8877 uv run python tests/e2e/verify_m2_ui.py`
+- **Tenant, fixture, seed, and trace ID:** All three sellers for catalog projection; VelocityKicks for prepared/custom chat and operation flow; no scenario seed or backend trace ID in the browser adapter.
+- **First incorrect pipeline stage:** Browser-test expectation construction, not product rendering.
+- **Root cause:** The new test compared a source listing field directly to a derived presentation label and did not propagate the added prepared event into the existing ledger count.
+- **Fix:** Assert `Selected` for the first pending catalog target and `Available` for the remaining cards; assert two correlated raw events after one prepared and one custom message.
+- **Files and functions changed:** `tests/e2e/verify_m2_ui.py`, `assert_m2_1_data_projection` and the ledger count assertion.
+- **Verification commands and results:** The complete Chromium flow passed and wrote four screenshots under `/tmp/sidestage-m2-ui`, including `m2-1-data-projection-desktop.png`; the narrow-layout overflow assertion also passed.
+- **Regression test:** The browser flow now validates exact fixture values and their deliberately derived UI states before continuing through the existing operation flow.
+- **Remaining risk:** This remains browser-adapter projection evidence; the Python importer does not become the UI's runtime source until the authoritative HTTP/SSE wiring milestone.
+- **60-second interview explanation:** I initially treated an `available` listing as if its UI badge had to say “Available.” The M2 design intentionally marks the first empty-stage target “Selected.” The failure showed the test was flattening source state and view state. I corrected the assertion to model that projection and updated the ledger count for the newly added prepared event, then reran the entire browser flow successfully.
+
+### DBG-006 — M3A.1 tests constructed profiles outside the strict validation path
+
+- **Date and commit:** 2026-08-17; uncommitted M3A.1 working tree
+- **Status:** Fixed
+- **Expected:** The first M3A.1 GREEN run validates deeply immutable profiles, duplicate terminal-tool rejection, and startup registration.
+- **Observed:** `test_profile_and_task_are_deeply_immutable` failed because `model_copy(update=...)` installed a raw dictionary without validation, while the duplicate-tool test supplied a list to a strict tuple field and failed before reaching the uniqueness invariant. The focused run reported `2 failed, 22 passed`.
+- **Exact reproduction command:** `uv run pytest tests/unit/agent_core/test_contracts.py tests/unit/agent_core/test_profile.py tests/unit/agent_core/test_isolation.py -q`
+- **Tenant, fixture, seed, and trace ID:** Domain-neutral M3A profile tests; no seller, M1/M2 fixture, scenario seed, or runtime trace.
+- **Log, trace, screenshot, or artifact:** Pytest showed `AttributeError: 'dict' object has no attribute 'to_dict'` during registration and a strict `tuple_type` validation error in the duplicate-tool case.
+- **Impact:** Product contracts were not shown to be incorrect, but the tests were bypassing the same strict construction path they were intended to verify. The `model_copy` behavior also identified a startup-hardening opportunity.
+- **Hypotheses considered:** Broken deep-immutable JSON wrapper; invalid Pydantic serializer; `model_copy(update=...)` bypassing validation; incorrect strict container type in the test payload.
+- **First incorrect pipeline stage:** Test fixture construction before the profile invariants under test.
+- **Root cause:** Pydantic deliberately does not validate `model_copy(update=...)`, and strict tuple fields reject lists before model-level uniqueness validation.
+- **Fix:** Construct the immutable profile through normal validation, pass a tuple to the duplicate-name test, and defensively revalidate a copied `AgentProfile` inside `register_profile` before schema compilation and hashing.
+- **Files and functions changed:** `tests/unit/agent_core/test_contracts.py`, `tests/unit/agent_core/test_profile.py`, and `src/sidestage/agent_core/profile.py::register_profile`.
+- **Verification commands and results:** The unchanged focused command passed with `24 passed in 0.29s`.
+- **Regression test:** The immutability test now mutates its original source schema after validated construction, and registration revalidates the complete serialized contract before accepting it.
+- **Remaining risk:** Full-suite regression and clean-tree evidence remain part of the M3A.1 review gate.
+- **60-second interview explanation:** My first GREEN run accidentally tested Pydantic construction shortcuts instead of the public strict boundary. One shortcut bypassed validation; the other failed on the container type before reaching the uniqueness rule. I corrected the fixtures and also made startup registration revalidate the full profile, so a malformed copied model cannot bypass the frozen registry. The same focused command then passed all 24 cases.
+
+### DBG-007 — Immutable JSON documents exported a misleading string schema
+
+- **Date and commit:** 2026-08-17; uncommitted M3A.1 working tree
+- **Status:** Fixed
+- **Expected:** Exported `AgentProfile` and `AgentTask` schemas describe adapter input schemas, tool argument schemas, model input, and correlation metadata as JSON objects.
+- **Observed:** The schema-export inspection reported the internal `FrozenJsonObject` definition as `type: string`, even though construction and serialization correctly accepted and emitted objects.
+- **Exact reproduction command:** `uv run python -c 'import json; from sidestage.agent_core import AgentProfile, AgentTask, AgentRunResult; schemas={c.__name__:c.model_json_schema() for c in (AgentProfile,AgentTask,AgentRunResult)}; print(json.dumps(schemas, sort_keys=True)[:1200])'`
+- **Tenant, fixture, seed, and trace ID:** Domain-neutral M3A schema export; no seller, fixture, seed, or trace ID.
+- **Log, trace, screenshot, or artifact:** The output contained `"FrozenJsonObject": {..., "type": "string"}`.
+- **Impact:** Runtime validation remained correct, but an adapter or reviewer consuming the exported contract would receive a false interface description.
+- **Hypotheses considered:** Incorrect object serializer; incorrect root-model input validator; Pydantic schema generation reflecting the immutable internal string representation instead of the public serialized representation.
+- **First incorrect pipeline stage:** Contract schema generation, after correct runtime construction and before adapter consumption.
+- **Root cause:** A custom Pydantic serializer changes emitted values but does not automatically change the generated JSON Schema for a `RootModel[str]`.
+- **Fix:** Added an explicit `__get_pydantic_json_schema__` hook advertising the public object representation and a regression assertion for both profile and task schema exports.
+- **Files and functions changed:** `src/sidestage/agent_core/contracts.py::FrozenJsonObject` and `tests/unit/agent_core/test_contracts.py`.
+- **Verification commands and results:** The focused M3A.1 suite passed with `25 passed in 0.32s`; a concise export command printed `object` for both `AgentProfile` and `AgentTask`.
+- **Regression test:** `test_exported_contract_schemas_describe_json_documents_as_objects`.
+- **Remaining risk:** Exported schemas describe arbitrary JSON-object contents; the adapter-specific input and terminal schemas remain the authoritative nested constraints compiled at profile registration.
+- **60-second interview explanation:** I inspected the generated schemas rather than assuming runtime tests covered them. The immutable wrapper stored canonical JSON internally as a string, and Pydantic exposed that implementation detail even though public serialization was an object. I overrode the schema representation and added a regression test. The runtime contract and exported contract now agree.
+
+### DBG-008 — Provider work started after deadline expiry at dispatch
+
+- **Date and commit:** 2026-08-17; uncommitted M3A.2 working tree on `d8c997f`
+- **Status:** Fixed
+- **Expected:** If the absolute monotonic deadline expires before provider dispatch, return `hard_timeout` and start zero provider work.
+- **Observed:** The core returned `hard_timeout`, but the deterministic runner recorded one invocation when the clock crossed the deadline between the remaining-time check and the provider-start timestamp.
+- **Exact reproduction command:** `uv run pytest tests/unit/agent_core/test_model_runner.py::test_deadline_expiring_at_dispatch_starts_zero_provider_work -q`
+- **Tenant, fixture, seed, and trace ID:** Domain-neutral task `task-m3a2-1`; no tenant or fixture; deterministic injected clock; trace `trace-m3a2-1`.
+- **Log, trace, screenshot, or artifact:** The focused failure reported `runner.calls` containing one `ModelInvocation` instead of `()`; terminal output is retained in the active Codex task.
+- **Impact:** The late result was safely discarded and no intent/effect escaped, but an already-expired task could still consume one paid provider request and violate the zero-work pre-dispatch invariant.
+- **Hypotheses considered:** `asyncio.wait_for` failed to cancel; task validation used wall time; provider returned too quickly; remaining time was sampled before the separately sampled dispatch boundary.
+- **First incorrect pipeline stage:** Provider dispatch, after valid task projection and before awaiting the provider.
+- **Root cause:** `StaticAgentCore.run` computed `remaining_s`, then sampled `provider_started_at`, but passed the stale earlier duration to `asyncio.wait_for` without rechecking the absolute deadline at the actual dispatch timestamp.
+- **Fix:** Recompute remaining time from the final `provider_started_at` timestamp and reject before calling `ModelRunner.run` when the absolute deadline is no longer in the future. The zero-work path records no provider duration because no provider work began.
+- **Files and functions changed:** `src/sidestage/agent_core/core.py::StaticAgentCore.run` and `tests/unit/agent_core/test_model_runner.py`.
+- **Verification commands and results:** The exact regression passed with `1 passed in 0.14s`; the focused M3A.2 suite passed with `19 passed in 0.20s`; `uv run pytest -q` passed with `92 passed, 1 skipped in 1.03s`; `git diff --check` and `uv lock --check` passed.
+- **Regression test:** `test_deadline_expiring_at_dispatch_starts_zero_provider_work`.
+- **Remaining risk:** `asyncio` scheduling still has an unavoidable sub-call timing gap after the final monotonic sample, but `wait_for` uses the recomputed remaining duration and every response is checked again against the same absolute deadline before parsing or returning intent. M3A.3 will exercise this boundary under queued concurrency and cancellation pressure.
+- **60-second interview explanation:** A result-level timeout test was not enough: it proved late intent suppression but not that an expired task avoided provider cost. I injected a clock that crossed the deadline between the initial remaining-time check and dispatch. The result still failed closed, but the call counter exposed one unnecessary request. The dispatch path needs to recompute remaining time from its final provider-start timestamp before invoking the runner.
+
+### DBG-009 — Live-provider client closed from a different event loop
+
+- **Date and commit:** 2026-08-17; uncommitted M3A.2 working tree on `d8c997f`
+- **Status:** Fixed
+- **Expected:** The credential-gated OpenAI smoke test makes one request, closes its owned HTTP client cleanly, and then asserts one sanitized terminal outcome.
+- **Observed:** The request completed far enough to leave a live HTTP connection, but the test called `asyncio.run(core.run(task))` and then a second `asyncio.run(runner.aclose())`. HTTPX cleanup failed with `RuntimeError: Event loop is closed` before the result assertions ran.
+- **Exact reproduction command:** `SIDESTAGE_MODEL_BASE_URL=https://api.openai.com/v1 SIDESTAGE_MODEL_API_KEY="$(tr -d '\\r\\n' < .env)" SIDESTAGE_MODEL_ID=gpt-5.4-nano-2026-03-17 uv run pytest tests/integration/agent_core/test_live_provider.py -m live_model -q`
+- **Tenant, fixture, seed, and trace ID:** Domain-neutral task `live-smoke-task`; no tenant, fixture, or seed; trace `live-smoke-trace`; pinned model snapshot `gpt-5.4-nano-2026-03-17`.
+- **Log, trace, screenshot, or artifact:** Pytest traceback retained in the active Codex task; no credential or response body was printed.
+- **Impact:** The live request path could not be classified as passed or failed even though unit-level HTTP mapping passed; cleanup failure masked the returned `AgentRunResult`.
+- **Hypotheses considered:** Invalid API key; unsupported model; tool-call schema rejection; HTTP timeout; HTTPX client bound to the event loop used by the request.
+- **First incorrect pipeline stage:** Test cleanup after `StaticAgentCore.run` returned, before live-result assertions.
+- **Root cause:** Async network resources are bound to their creating/operating event loop. The test used two independent `asyncio.run()` calls for request and cleanup.
+- **Fix:** Added one `run_and_close` coroutine that awaits `StaticAgentCore.run` and closes the runner in `finally`, then calls `asyncio.run()` exactly once. Added a credential-free sanitized summary containing only configured/reported model ID, status, terminal or failure code, and latency.
+- **Files and functions changed:** `tests/integration/agent_core/test_live_provider.py::test_configured_live_provider_returns_one_sanitized_terminal_outcome`.
+- **Verification commands and results:** The corrected live test first passed with `1 passed in 4.13s`. The retained sanitized rerun passed with `1 passed in 1.07s` and reported configured/reported model `gpt-5.4-nano-2026-03-17`, `status=succeeded`, terminal `finish`, provider `901.315 ms`, parse `0.135 ms`, and core total `901.489 ms`. The offline M3A.2 suite passed with `19 passed in 0.17s`; `uv run pytest -q` passed with `94 passed, 1 skipped in 1.23s`; diff and lock checks passed.
+- **Regression test:** The credential-gated `test_configured_live_provider_returns_one_sanitized_terminal_outcome` is the reproduction.
+- **Remaining risk:** This is one smoke request, not a latency distribution or terminal-compliance matrix. M3A.4 must run the declared live workload repeatedly before any p50/p95 or provider-quality claim.
+- **60-second interview explanation:** The first real API call uncovered an async ownership mistake in the smoke test, not a model-contract failure. HTTPX kept a connection associated with the request loop, while cleanup ran in a fresh loop. The fix is to wrap both the core call and `aclose()` in one coroutine and invoke `asyncio.run()` exactly once, preserving deterministic cleanup and allowing the actual model result to be evaluated.
+
+### DBG-010 — Bare API key exposed by environment-name inspection
+
+- **Date and commit:** 2026-08-17; uncommitted M3A.3 working tree on `693d86a`
+- **Status:** Open pending credential rotation
+- **Expected:** Inspect only environment-variable names without printing any credential value before rerunning the credential-gated live smoke test.
+- **Observed:** `.env` contains a bare API key rather than `NAME=value`; a command intended to strip values therefore printed the bare credential into the local tool transcript. During the later M3B.5 audit, a second value-redaction command repeated the same invalid assignment-format assumption and exposed the still-unrotated value again.
+- **Exact reproduction command:** First occurrence: `sed -E 's/[[:space:]]*=.*$//' .env | sed '/^[[:space:]]*#/d' | sed '/^[[:space:]]*$/d'`. Recurrence: `sed -E 's/=.*/=<redacted>/' .env`.
+- **Tenant, fixture, seed, and trace ID:** No tenant, fixture, seed, or agent trace; local credential-handling incident.
+- **Log, trace, screenshot, or artifact:** The secret-bearing output exists in the active Codex tool transcript and is deliberately not copied into this log.
+- **Impact:** The OpenAI credential must be treated as exposed and rotated. No repository file was modified with the credential, and the value remains ignored by Git through `.gitignore`.
+- **Hypotheses considered:** Conventional dotenv assignment; bare-key file; comment-only file.
+- **First incorrect pipeline stage:** Credential-shape discovery before the live-provider test.
+- **Root cause:** The inspection assumed dotenv assignment syntax despite prior evidence that this repository's `.env` stores one bare key.
+- **Fix:** Stop inspecting or sourcing the file as dotenv. Map the file contents directly into `SIDESTAGE_MODEL_API_KEY` with command substitution that is never echoed, update reviewer commands to reflect the actual bare-key shape, and ask the builder to rotate the exposed key.
+- **Files and functions changed:** This incident entry only; `.env` and application code are unchanged.
+- **Verification commands and results:** The no-echo mapping successfully ran the existing live smoke with `1 passed in 2.23s`; its sanitized output contained only model identity, terminal status, and latency. The M3B reviewer-path smoke later passed with a credential already exported in the process environment and printed no secret. Credential rotation remains pending.
+- **Regression test:** Operational rule: never print, enumerate, or source this bare-key `.env`; use a no-echo direct mapping only when explicitly running the live smoke.
+- **Remaining risk:** The exposed key remains usable until the builder revokes or rotates it, and existing local transcript retention is outside the repository's control.
+- **60-second interview explanation:** I assumed `.env` used normal `NAME=value` syntax and ran a name-only inspection. Because the file contained only the raw key, the transformation had nothing to remove and printed it. I stopped, disclosed the exposure immediately, avoided copying the credential into the repository, documented the exact failure without the value, and required rotation.
+
+### DBG-011 — Trace-overhead benchmark rejected strict enum and then under-measured the path
+
+- **Date and commit:** 2026-08-17; uncommitted M3A.4 working tree on `693d86a`
+- **Status:** Fixed
+- **Expected:** The generic pressure evaluator measures the per-event cost of constructing a validated core trace event and passing it through the same fail-open emitter used by `StaticAgentCore`.
+- **Observed:** The first focused M3A.4 run failed because the benchmark serialized a strict `CoreTraceEventType` enum to JSON text and passed the string back into strict Pydantic validation. Reusing the already-validated event made the tests pass but timed only the in-memory sink append, which understated core instrumentation cost.
+- **Exact reproduction command:** `uv run pytest tests/unit/agent_core/test_scenario_generator.py tests/integration/agent_core/test_replay.py tests/integration/agent_core/test_evaluation.py tests/integration/agent_core/test_pressure.py -q -m 'not live_model' -x`
+- **Tenant, fixture, seed, and trace ID:** No tenant; `fixtures/agent_core/pressure_v1.json`; seed `20260817`; generated generic task traces.
+- **Log, trace, screenshot, or artifact:** Pytest reported `CoreTraceEvent.event_type` required a `CoreTraceEventType` instance but received the string `task_accepted`. The corrected retained result is in `runs/agent_core_regression_v1/evaluation.json`.
+- **Impact:** Runtime behavior was unaffected, but the harness could not complete initially; the first passing workaround would also have produced misleadingly small trace-overhead evidence.
+- **Hypotheses considered:** Relax strict event validation; validate JSON-mode dumps; emit the retained object directly; benchmark the actual construction-plus-emission boundary with Python-mode enum values.
+- **First incorrect pipeline stage:** M3A.4 evaluator metric collection after the deterministic core execution completed.
+- **Root cause:** JSON-mode serialization intentionally converts the enum to a string, while the immutable trace contract is strict. Separately, sink-only timing did not represent the declared metric.
+- **Fix:** Build a Python-mode field mapping that preserves the enum instance, construct and strictly validate one fresh `CoreTraceEvent` per sample, and emit it through `SafeTraceEmitter` into the no-I/O sink.
+- **Files and functions changed:** `src/sidestage/agent_core/evaluation.py::_trace_overhead` and this incident entry.
+- **Verification commands and results:** The exact M3A.4 focused command passed with `8 passed, 1 deselected`; the default repository suite passed with `115 passed, 2 deselected`; the retained scripted artifact replay matched. The corrected 2,000-sample benchmark reports about `0.0037 ms` p95 per event against the declared `0.25 ms` budget on this run.
+- **Regression test:** `tests/integration/agent_core/test_pressure.py::test_pressure_reports_fifo_backpressure_latency_and_trace_overhead` requires at least 1,000 samples and a passing declared overhead verdict.
+- **Remaining risk:** This local microbenchmark describes validated event construction plus an in-memory fail-open emission only. A future asynchronous persistence adapter needs its own enqueue and downstream storage measurements and still must not block the core.
+- **60-second interview explanation:** Strict trace contracts preserve enum types in Python but serialize them to strings in JSON. I initially fed the JSON string back to strict validation and the evaluator failed. Reusing the existing object removed the error but timed only a list append, so I rejected that as misleading. The final benchmark constructs a fresh validated event with the enum preserved and sends it through the real fail-open emitter, which measures the boundary we actually claim.
+
+### DBG-012 — Permissive JSON constants escaped the evaluator's typed error boundary
+
+- **Date and commit:** 2026-08-17; uncommitted M3A.4 working tree on `693d86a`
+- **Status:** Fixed
+- **Expected:** Digest-bearing fixture/replay JSON and model-returned terminal arguments reject non-standard non-finite constants and duplicate object keys through sanitized typed failures.
+- **Observed:** A malformed-scenario regression containing `NaN` reached canonical hashing and raised a raw `ValueError` instead of `EvaluationArtifactError`. The same audit showed that Python's permissive `json.loads` could admit `NaN` into a numeric terminal schema and could silently keep the last duplicate object key.
+- **Exact reproduction command:** `uv run pytest tests/unit/agent_core/test_scenario_generator.py tests/integration/agent_core/test_replay.py -q -x`
+- **Tenant, fixture, seed, and trace ID:** No tenant; temporary mutation of `fixtures/agent_core/pressure_v1.json`; seed `20260817`; no runtime trace because generation failed before submission.
+- **Log, trace, screenshot, or artifact:** Pytest reported `ValueError: Out of range float values are not JSON compliant` from `_canonical_json_line`; no secret or model payload was printed.
+- **Impact:** The malformed fixture did not produce a false passing evaluation, but it escaped the evaluator's declared error contract. At the terminal boundary, a non-finite number could have raised outside the required typed `malformed_arguments` path after schema validation.
+- **Hypotheses considered:** Validate only numeric budget fields; rely on Pydantic after parsing; allow Python JSON extensions; reject non-finite constants and duplicate keys at every untrusted JSON parse boundary.
+- **First incorrect pipeline stage:** JSON parsing before scenario digesting; the analogous risk was terminal-argument parsing before strict intent construction.
+- **Root cause:** Python's standard JSON loader accepts `NaN` and infinities by default and collapses duplicate object keys, while canonical serialization and immutable core contracts intentionally reject those values.
+- **Fix:** Added strict `parse_constant` and `object_pairs_hook` callbacks to evaluator fixture/event parsing and terminal-argument parsing. Added scenario/profile-bound validation before evaluation, explicit malformed-manifest handling, and regressions for non-finite constants, duplicate keys, unknown provider conditions, excessive deadlines, and malformed manifest model metadata.
+- **Files and functions changed:** `src/sidestage/agent_core/evaluation.py::_load_json_object`, `_read_event_records`, and `generate_workload`; `src/sidestage/agent_core/terminal.py::decode_terminal_response`; associated M3A unit/integration tests.
+- **Verification commands and results:** Strict terminal/scenario/replay tests passed with `21 passed`; the documented offline gates then passed with M3A.1 `28`, M3A.2 `22`, M3A.3 `14`, and M3A.4 `14 passed, 1 deselected`. The regenerated 20-task artifact replay matched.
+- **Regression test:** `test_generator_rejects_malformed_or_unbounded_scenarios`, `test_generator_rejects_duplicate_fixture_object_keys`, the non-finite/duplicate terminal verdict cases, and `test_replay_rejects_malformed_manifest_model_with_seed`.
+- **Remaining risk:** JSON returned inside a provider's terminal-call argument remains untrusted until this parser runs; provider transport failures and non-JSON response envelopes are separately mapped to `provider_error`.
+- **60-second interview explanation:** Python accepts `NaN` and duplicate keys even though canonical JSON and our immutable contracts do not. The evaluator initially failed with a raw serialization error, which revealed the same risk at the model terminal boundary. I moved rejection to parsing, where untrusted bytes first become data, so fixtures fail as `EvaluationArtifactError` and model arguments fail as `malformed_arguments` before any intent or effect can exist.
+
+### DBG-013 — GPT-5.6 Luna rejected Chat Completions function tools at its default reasoning effort
+
+- **Date and commit:** 2026-08-17; HEAD `6d3a6e78f298476019db6885bc428753c5509784` plus the current dirty M3A working tree.
+- **Status:** Fixed
+- **Expected:** The existing one-request OpenAI-compatible runner should return exactly one registered `finish` terminal call when configured with `gpt-5.6-luna`.
+- **Observed:** The core returned sanitized `provider_error` after about 1,273 ms with no terminal call. A sanitized direct diagnostic returned HTTP 400: function tools with reasoning effort are unsupported for Luna on Chat Completions unless reasoning effort is `none` or the request uses Responses.
+- **Exact reproduction command:** `SIDESTAGE_MODEL_BASE_URL=https://api.openai.com/v1 SIDESTAGE_MODEL_API_KEY=<rotated-secret> SIDESTAGE_MODEL_ID=gpt-5.6-luna uv run pytest tests/integration/agent_core/test_live_provider.py -m live_model -q -s`
+- **Tenant, fixture, seed, and trace ID:** Domain-neutral task `live-smoke-task`; no tenant, fixture, or seed; trace `live-smoke-trace`; model `gpt-5.6-luna`.
+- **Log, trace, screenshot, or artifact:** Sanitized failing `LIVE_SMOKE` output in the development session; successful four-task artifacts under `runs/exploratory/agent_core_luna/`.
+- **Impact:** A model-ID-only switch could not exercise M3A terminal tools, and the sanitized provider boundary intentionally hid the provider's request-validation detail from the core result.
+- **Hypotheses considered:** Invalid model access; unsupported `tool_choice=required`; unsupported `parallel_tool_calls`; malformed tool schema; Luna default reasoning incompatibility with Chat Completions function tools.
+- **First incorrect pipeline stage:** Provider request configuration before the one Chat Completions call.
+- **Root cause:** GPT-5.6 Luna defaults to medium reasoning. Its Chat Completions endpoint rejects function tools at that effort and requires `reasoning_effort=none`; the M3A runner previously had no explicit reasoning-effort configuration.
+- **Fix:** Added an optional allowlisted reasoning-effort field to `OpenAICompatibleModelConfig`, conditionally projected it into the provider request, exposed optional `SIDESTAGE_MODEL_REASONING_EFFORT` to the live smoke and evaluator, and retained it in the sanitized live manifest. The Luna run uses `none`; unspecified providers retain the previous omitted-field behavior.
+- **Files and functions changed:** `src/sidestage/agent_core/model.py::OpenAICompatibleModelConfig` and `OpenAICompatibleModelRunner.run`; `src/sidestage/agent_core/evaluation.py`; live and unit agent-core tests; TDD and milestone evidence notes.
+- **Verification commands and results:** Focused offline configuration/generator tests passed with `17 passed`. The corrected Luna smoke passed with one `finish` terminal call, about 1,186 ms provider time, and about 1,187 ms total core time. The four-task live matrix returned 4/4 expected outcomes, four complete traces, zero failures, and zero effects; provider p95 was about 1,065 ms, queue p95 about 1,015 ms, and total core p95 about 2,057 ms, a miss against the 1,450 ms generic budget.
+- **Regression test:** `test_openai_compatible_runner_maps_one_http_request`, `test_openai_compatible_runner_omits_unspecified_reasoning_effort`, and `test_live_manifest_records_endpoint_and_model_without_credentials`.
+- **Remaining risk:** Four samples establish compatibility but not a stable p95. With two workers, the declared four-task burst queues a second wave and misses the generic core budget even though provider p95 is below the budget. Luna is not yet the selected production model, and the SideStage two-request end-to-end boundary remains unmeasured.
+- **What I personally did:** The builder selected Luna as the candidate, confirmed credential rotation, and authorized the live calls.
+- **What AI suggested:** Preserve the generic core and add the smallest provider-specific reasoning option rather than coupling Luna behavior to agent profiles.
+- **What I rewrote or rejected:** Rejected both silently accepting Luna's medium default and migrating to Responses during the model comparison, because either would make the compatibility or latency result ambiguous.
+- **60-second interview explanation:** The model swap initially failed even though Luna supports function tools. The provider explained that Luna's medium default is incompatible with function tools on Chat Completions. I kept the agent contract unchanged, made reasoning effort an optional provider setting, and ran Luna at `none`. The terminal contract then passed, but the four-task burst exposed a separate queue-capacity issue: provider latency was near one second while the second worker wave pushed total core latency above two seconds.
+
+### DBG-014 — M2.3 reload silently replaced the opaque server session
+
+- **Date and commit:** 2026-08-17; discovered after `6d3a6e7`, fixed and regression-tested in `734d151`.
+- **Status:** Fixed
+- **Expected:** Reloading the seller workspace reuses the opaque server-issued session, reconstructs the same SQLite state, and resumes SSE from the current persisted offset.
+- **Observed:** Marketplace state appeared correct after reload, but the browser test found that the session token changed. The initial boot path always issued a new demo session for the default seller, masking the replacement because both sessions resolved to the same deterministic seller/show state.
+- **Exact reproduction command:** `uv run pytest tests/e2e/test_marketplace_ui.py -q`
+- **Tenant, fixture, seed, and trace ID:** `sel_velocity_kicks`; default prepared-chat seed `20260817`; session IDs were intentionally omitted from the log; no reply-agent trace exists because Copilot is off.
+- **Log, trace, screenshot, or artifact:** Playwright failed the post-reload token equality assertion while the active SKU and two chat events had already converged correctly.
+- **Impact:** Durable marketplace state was not lost, but reconnect semantics were weaker than the UI implied: every reload reset session identity and opened a fresh SSE subscription instead of restoring the established projection boundary.
+- **Hypotheses considered:** `sessionStorage` was cleared on reload; the server forgot the session; seller state was reconstructed from browser storage; application boot ignored the stored opaque token.
+- **First incorrect pipeline stage:** Browser bootstrap before snapshot restoration and SSE connection.
+- **Root cause:** `boot()` populated sellers and unconditionally called `setActiveSeller()`, which always POSTed `/api/demo/sessions`; it never attempted the stored token's snapshot endpoint.
+- **Fix:** Added `restoreSession()`. Boot now asks the backend for the stored token's authoritative snapshot, renders it, and reconnects SSE; only an absent or rejected token falls back to issuing a new demo session. Browser marketplace state remains absent from `localStorage`.
+- **Files and functions changed:** `src/sidestage/web/static/app.js::boot` and `restoreSession`; `tests/e2e/test_marketplace_ui.py`.
+- **Verification commands and results:** Against `734d151`, the focused M2.3 gate passed with `11 passed in 3.35s`; the complete deterministic suite passed with `161 passed, 2 deselected in 4.50s`; and the complete M2 gate passed again during closeout with `75 passed in 4.71s`. With workstation port `8000` occupied by an unrelated Uvicorn process, the same application command on port `8766` returned `200` for `/app/` and `/api/sellers`, including all three approved seller personas.
+- **Regression test:** `test_non_ai_marketplace_flow_is_server_owned_and_reconnectable` asserts stable opaque session identity, unchanged active SKU and chat after reload, zero browser-local marketplace records, and second-page convergence through snapshot plus SSE.
+- **Remaining risk:** Demo sessions are intentionally in-process and synthetic; a full process restart requires a newly issued opaque session, while persisted seller/show/chat/receipt state remains in SQLite. Production authentication is outside this prototype.
+- **What I personally did:** The builder required server-owned state, reconnect correctness, and no browser-local authority.
+- **What AI suggested:** Restore the opaque token before issuing a session and add a second-page SSE convergence assertion.
+- **What I rewrote or rejected:** Did not weaken the test to accept state-only convergence, because that would hide session churn and fail to prove the intended reconnect path.
+- **60-second interview explanation:** The first browser reconnect test looked healthy—the SKU and chat survived—but it compared the opaque token and exposed that every reload silently created a new session. The deterministic show ID hid the bug. I changed boot to restore the existing token through the server snapshot first, then reconnect SSE from the persisted offset. A new token is created only when restoration genuinely fails.
+
+### DBG-015 — Runtime debugger sent its placeholder label as an actual-route filter
+
+- **Date and commit:** 2026-08-17; uncommitted M3B.4 working tree on `734d151`
+- **Status:** Fixed
+- **Expected:** Opening the debugger after accepting messages fetches the unfiltered runtime projection, then replaces the placeholder with the backend's allowed actual-route filters.
+- **Observed:** The runtime trace panel reported `Unable to load runtime data (400)` even though two complete traces were persisted and directly readable through the API.
+- **Exact reproduction command:** `.venv/bin/pytest tests/e2e/test_debugger.py -q`
+- **Tenant, fixture, seed, and trace ID:** `sel_velocity_kicks`; custom eligible and noise messages; no generated-fixture oracle or seed; trace IDs were runtime-generated and intentionally omitted from this log.
+- **Log, trace, screenshot, or artifact:** Playwright expected `2 persisted traces` but observed the HTTP 400 UI message. The backend integration projection test passed independently, isolating the error to browser bootstrap.
+- **Impact:** The new persisted trace API worked, but a fresh debugger page could not display any M3B trace until a valid filter value existed.
+- **Hypotheses considered:** Missing session token; trace projection schema mismatch; invalid tenant scope; browser placeholder accidentally treated as a request value.
+- **First incorrect pipeline stage:** Debugger browser bootstrap before the read-only projection request; the eight-stage reply pipeline had already completed correctly.
+- **Root cause:** The disabled placeholder `<option>` had no explicit value. The DOM therefore exposed its display label, `Loading runtime filters…`, and `renderRuntimeTraces()` sent that text as `actual_route`; the backend correctly rejected the unknown filter.
+- **Fix:** Give the initial placeholder the neutral value `all`, which intentionally omits `actual_route` on the first request. The backend response then supplies the only selectable route filters.
+- **Files and functions changed:** `src/sidestage/web/static/debug.html` initial `#trace-scenario` option; browser regression test in `tests/e2e/test_debugger.py`.
+- **Verification commands and results:** The immediate `.venv/bin/pytest tests/e2e/test_debugger.py -q` rerun passed with `1 passed in 2.00s`; the backend projection contract separately passed with `1 passed in 0.49s`.
+- **Regression test:** `test_debugger_renders_and_filters_real_eight_stage_runtime_traces` requires the fresh page to show two traces, switch between actual eligible/noise routes, render eight stages and the registered-agent identity, and make no request for the old presentation fixture.
+- **Remaining risk:** The debugger is intentionally session-scoped and read-only; opening it without first creating a seller session shows a bounded empty-state message.
+- **What I personally did:** The builder required the debugger to associate registration and workflow behavior with inspectable runtime evidence.
+- **What AI suggested:** Source filter values from the backend projection and make the pre-fetch value explicitly neutral.
+- **What I rewrote or rejected:** Did not loosen backend filter validation, because accepting arbitrary labels would hide client bugs and weaken the actual-versus-expected route boundary.
+- **60-second interview explanation:** The persisted traces were correct, but the browser sent its loading label as though it were a real route. The API rejected it, which was the right behavior. I made the initial value explicitly `all`, so the first request is unfiltered and every later filter comes from the backend's allowlist.
+
+### DBG-016 — Product-mention routing helper accidentally ended the router class
+
+- **Date and commit:** 2026-08-18; uncommitted M3B.5 working tree on `734d151`
+- **Status:** Fixed
+- **Expected:** A unique product or listing name should bind exactly like a unique explicit SKU, while every existing router method remains callable.
+- **Observed:** All seven focused routing tests failed with `AttributeError: 'CopilotRouter' object has no attribute '_insert_question_row'` immediately after adding product-name recognition.
+- **Exact reproduction command:** `.venv/bin/pytest tests/integration/test_copilot_routing.py -q`
+- **Tenant, fixture, seed, and trace ID:** Synthetic `sel_velocity_kicks`; custom messages; no generated seed; runtime-generated trace IDs were omitted.
+- **Log, trace, screenshot, or artifact:** Pytest reported seven failures from `CopilotRouter.normalize_and_deduplicate`; the first missing method was `_insert_question_row`.
+- **Impact:** The dirty development tree could not route any message. No committed or retained evaluation evidence was affected.
+- **Hypotheses considered:** Stale import cache; misspelled method; incorrect indentation after inserting a module helper.
+- **First incorrect pipeline stage:** Stage 2 normalization/deduplication before any analysis or model request.
+- **Root cause:** The new module-level `_explicit_product_mention` helper was inserted between class methods at zero indentation, ending `CopilotRouter`; the following indented methods became nested in the helper rather than members of the class.
+- **Fix:** Moved the helper above `CopilotRouter` and restored the existing methods to the class body.
+- **Files and functions changed:** `src/sidestage/copilot/routing.py`; the focused name-binding regression in `tests/integration/test_copilot_routing.py`.
+- **Verification commands and results:** `.venv/bin/pytest tests/integration/test_copilot_routing.py -q` passed with `7 passed in 0.42s`.
+- **Regression test:** `test_unique_product_name_cannot_be_answered_from_the_wrong_active_listing` also proves an unseen named product needs seller clarification and a previously shown named product is not silently rebound.
+- **Remaining risk:** Recognition intentionally uses only exact SKU, model name, listing title, or brand-plus-model aliases; nicknames and fuzzy references remain uncertain and fail closed.
+- **What AI suggested:** Extend the accepted explicit-reference rule with exact seller-owned aliases and add the negative wrong-listing case before running pressure.
+- **What I rewrote or rejected:** Rejected fuzzy matching and colorway-only matching because either could create false product authority.
+- **60-second interview explanation:** While closing a genuine wrong-product safety gap, I placed a helper at the wrong indentation and accidentally ended the router class. The focused suite failed every route immediately, so nothing unsafe progressed. Moving the helper above the class restored the router, and the new regression now proves named products cannot borrow evidence from the active listing.
+
+### DBG-017 — Debugger SSE refresh displaced the stage being inspected
+
+- **Date and commit:** 2026-08-18; uncommitted M3B.5 working tree on `734d151`
+- **Status:** Fixed
+- **Expected:** Selecting stage 5 on a persisted research trace continues to show its evidence snapshot while routine SSE-driven projection refreshes arrive.
+- **Observed:** The stage title briefly showed `Evidence Retrieval`, but its output changed to stage 8 publication and end-to-end latency artifacts during the golden browser test.
+- **Exact reproduction command:** `.venv/bin/pytest tests/e2e/test_golden_demo.py -q`
+- **Tenant, fixture, seed, and trace ID:** Synthetic `sel_velocity_kicks`; custom Aero Dash research question; no generated seed; runtime trace ID omitted.
+- **Log, trace, screenshot, or artifact:** Playwright expected `synthetic_seller_data` in `#trace-stage-output` but observed `publication` and `end_to_end_latency` artifacts even though the direct backend projection contained the correct stage-5 `release_date` evidence.
+- **Impact:** Runtime evidence remained correct and persisted, but a developer could be moved away from the selected stage while reading it and misinterpret which artifacts belonged to the visible title.
+- **Hypotheses considered:** Artifact-stage persistence corruption; projection grouping defect; stale locator; SSE refresh resetting client selection.
+- **First incorrect pipeline stage:** Read-only debugger rendering after all eight backend stages had completed correctly.
+- **Root cause:** `renderRuntimeTraces()` preserved the selected trace ID but unconditionally reset `activeStageNumber` to the trace's decisive stage on every refresh.
+- **Fix:** Preserve the prior stage number when the same trace remains selected and still contains that stage; choose the decisive stage only for a genuinely new trace.
+- **Files and functions changed:** `src/sidestage/web/static/debugger.js::renderRuntimeTraces`; `tests/e2e/test_golden_demo.py`.
+- **Verification commands and results:** The localhost/Chromium golden path passed with `1 passed in 3.24s`, including stage-5 provenance inspection and screenshot capture.
+- **Regression test:** `test_golden_demo_proves_review_auto_research_race_and_debugger` selects the research trace and stage 5 while the debugger's live connection is active, then requires the rendered `release_date` and `synthetic_seller_data` provenance.
+- **Remaining risk:** Changing filters or selecting a different trace intentionally chooses that trace's decisive stage; the debugger does not preserve separate per-trace stage selections.
+- **What AI suggested:** Preserve the selected stage only when the same trace survives refresh, avoiding a global or stale stage index.
+- **What I rewrote or rejected:** Rejected adding an arbitrary browser delay, because it would hide the refresh race instead of fixing the interaction.
+- **60-second interview explanation:** The backend trace was right, but the live debugger kept resetting to stage 8 whenever SSE refreshed. That made the heading and payload look mismatched during inspection. I preserved the stage number only for the same trace, so live refreshes update data without stealing the developer's place.
+
+### DBG-018 — Two-call Luna pressure runs missed correctness and latency gates
+
+- **Date and commit:** 2026-08-18; uncommitted dirty M3B.5 tree on `734d151`
+- **Status:** Diagnosed
+- **Expected:** The 360-chat, three-seller live workload should reach at least 95% supported answerable suggestions, preserve exact route labels, and keep real-model end-to-end p95 below two seconds.
+- **Observed:** The first `gpt-5.6-luna` run at `reasoning_effort=none` produced 19/72 supported answerable suggestions, 31 route mismatches, 86 SLO misses, six hard timeouts, and 3,709.36 ms total p95. After prompt/fixture diagnostics, the second run improved to 48/72 supported answerable suggestions and three route mismatches, but produced 94 SLO misses, 17 hard timeouts, and 4,981.32 ms total p95. After the separate strict-schema compatibility incident in DBG-020 was fixed, the latest valid run reached 54/72 supported suggestions with zero route mismatches, 91 SLO misses, 14 hard timeouts, and 4,530.28 ms p95. It safely handled 24/24 ambiguous or unsupported cases, 24/24 prompt injections, and 60/60 duplicate children, with every hard safety/trace invariant at zero.
+- **Exact reproduction commands:** First: `set -a; source .env >/dev/null 2>&1; set +a; SIDESTAGE_MODEL_ID=gpt-5.6-luna SIDESTAGE_MODEL_REASONING_EFFORT=none .venv/bin/python -m sidestage.trace.evaluator --scenario fixtures/scenarios/pressure_v1.json --seed 20260817 --model live --output runs/exploratory/evaluation_live_precommit.json`. Second: the same command with output `runs/exploratory/evaluation_live_precommit_v2.json`. These historical commands are retained exactly, but `.env` is a bare-key file and was not the effective exported credential source; do not reuse the `source .env` prefix. Follow the current README no-echo mapping instead.
+- **Tenant, fixture, seed, and trace ID:** All three synthetic sellers; `pressure_v1`; seed `20260817`; individual trace IDs are retained only in the sanitized report's mismatch records.
+- **Log, trace, screenshot, or artifact:** `runs/exploratory/evaluation_live_precommit.json`, `evaluation_live_precommit_v2.json`, and the latest valid `evaluation_live_precommit_v4.json`; credential scans found no API key, bearer token, or authorization value. The v3 fast-failure artifact is documented separately in DBG-020 and is not latency evidence.
+- **Impact:** Luna compatibility is established, but this run cannot support the final correctness or sub-two-second claim. It remains dirty `Implemented` evidence, never `Measured` evidence.
+- **Hypotheses considered:** Unclear classification instructions; natural paraphrases failing exact deterministic support; queue pressure alone; one slow provider stage; the fundamental sum of two sequential model calls.
+- **First incorrect pipeline stage:** Correctness first diverged at stage 4 classification and stage 7 support validation. Latency accumulated across stage 4, stage 6, and queue wait rather than a local database stage.
+- **Root cause:** The initial analysis policy did not spell out the accepted intent/fact taxonomy, and the reply profile allowed paraphrases that the deterministic claim checker could reject. The first workload also allowed multi-product questions to be evaluated while only one current listing was active, which correctly exposed wrong-product binding rather than stable answer coverage. Tightening those contracts improved correctness, but the latest valid run confirms the latency problem is architectural for this model/workload: median analysis was 1,130.13 ms, median registered reply-agent time was 1,080.50 ms, and burst queue p95 was 2,568.65 ms. Two sequential calls already exceed the two-second target near the median before burst queueing.
+- **Fix applied and remaining:** Tightened the analysis taxonomy, required the bounded reply agent to copy one relevant evidence value and ID exactly, separated exactly 24 stable `pressure_answerable` candidates per seller from broader presentation/temporal pools, added per-bucket diagnostics, added provider-compatible strict schemas, made high-certainty reaction routing deterministic, and made tenant/listing/fact-scoped research fall back from unmatched FTS vocabulary to the one trusted exact record. The latest valid live run removes all route mismatches and improves supported coverage to 54/72 before the final retrieval fallback, but cannot remove the sequential latency sum. A call-path or model change requires builder review.
+- **Files and functions changed:** `fixtures/chat_messages.json`; `src/sidestage/copilot/analysis.py::_SYSTEM_POLICY`; `src/sidestage/copilot/profile.py::build_livesell_reply_profile`; `src/sidestage/copilot/routing.py`; `src/sidestage/fixtures/generator.py`; `src/sidestage/agent_core/model.py`; `src/sidestage/trace/pressure.py::_pressure_report`.
+- **Verification commands and results:** Offline profile, routing, analysis, retrieval, scheduler, provider-map, and scripted pressure regressions pass. The latest valid live report (`evaluation_live_precommit_v4.json`) has every hard invariant at zero and zero route mismatches, but still fails coverage and p95 as described above. The final deterministic audit passes with `262 passed, 3 deselected in 40.28s`; scripted pressure and all ten scripted safety cases pass.
+- **Regression test:** The scripted pressure test requires 72/72 supported answerable parents and explicit zero-valued safety invariants; live behavior remains an external measurement rather than a deterministic regression.
+- **Remaining risk:** Even perfect correctness leaves the two sequential Luna calls over budget under the approved burst profile. Changing the common-path call count or selected model is an architecture/product decision; removing queue time, weakening the workload, or relaxing guardrails would only hide the failure.
+- **What AI suggested:** First remove avoidable prompt/claim-contract errors and rerun the same fixed workload; keep the latency result separate from correctness.
+- **What I rewrote or rejected:** Rejected weakening the broker, relabeling safe-but-different model routes as passes, excluding queue time, or claiming accelerated scripted latency as the SLO.
+- **60-second interview explanation:** The first real SideStage pressure run was safe but not good enough. I separated wrong-product fixture problems from model-contract problems, tightened both, and reran the identical fixed workload. The latest valid run improved coverage from 19/72 to 54/72, removed every route mismatch, and kept all safety buckets clean, but p95 remained 4.53 seconds because the two sequential calls each take about 1.1 seconds at the median and the burst queues. The honest conclusion is that the accepted two-call Luna common path cannot currently meet two seconds; I did not hide queue time or weaken the broker.
+
+### DBG-019 — Documented Uvicorn factory silently used an empty scripted runner
+
+- **Date and commit:** 2026-08-18; uncommitted M3B.5 audit tree on `734d151`
+- **Status:** Fixed
+- **Expected:** The reviewer-facing end-to-end Uvicorn command constructs the selected live runner from exported configuration, fails before accepting chat when required configuration is absent, and never records the credential.
+- **Observed:** The documented command targeted `create_app()`, whose deliberate deterministic default is `ScriptedModelRunner(())`. The UI and M3B pipeline started, but every eligible un-injected Copilot request exhausted the empty runner instead of reaching the configured live provider.
+- **Exact reproduction command:** `rg -n "configured_runner|ScriptedModelRunner|create_app" src/sidestage/app.py README.md docs/TDD.md`
+- **Tenant, fixture, seed, and trace ID:** No tenant or message was required; the mismatch existed at application construction before session/chat acceptance.
+- **Log, trace, screenshot, or artifact:** Source inspection showed `configured_runner = model_runner or ScriptedModelRunner(())` while the only documented Uvicorn factory supplied no injected runner.
+- **Impact:** Deterministic tests and the explicit live pressure evaluator were unaffected, but the claimed reviewer run command was not a live-model prototype command.
+- **Hypotheses considered:** Uvicorn injects a runner automatically; `create_app()` loads `.env`; an environment-based wrapper already exists; the empty runner is intentional only for tests.
+- **First incorrect pipeline stage:** Deployment construction before startup profile registration.
+- **Root cause:** Dependency injection correctly kept credentials out of the generic factory, but there was no separate environment adapter joining that port to the reviewer process.
+- **Fix:** Added `create_live_app()`. It requires `OPENAI_API_KEY` or scoped `SIDESTAGE_MODEL_API_KEY` plus `SIDESTAGE_MODEL_ID`, builds one shared strict OpenAI-compatible runner, records only sanitized model metadata, closes the owned HTTP client at shutdown, and fails before database initialization when configuration is incomplete. `create_app()` remains the credential-free deterministic injection factory.
+- **Files and functions changed:** `src/sidestage/app.py::create_live_app`; `tests/integration/test_live_app_factory.py`; run commands and boundaries in `README.md`, `docs/TDD.md`, and both M3B plans.
+- **Verification commands and results:** The RED import failed because `create_live_app` did not exist. The focused factory test then passed with `3 passed in 0.37s`; the expanded M3B.5 latency/factory/golden gate passed with `10 passed, 1 deselected in 19.39s` without a network call or persisted secret. The separately marked reviewer-path smoke then exercised both Luna calls, the R2 card, and the complete debugger trace with `1 passed in 2.67s`.
+- **Regression test:** Missing-key pre-database failure, strict Luna configuration mapping, scoped-key precedence, sanitized state/repr, seller endpoint startup, shutdown cleanup, and the separately marked full two-call path execute in `tests/integration/test_live_app_factory.py`.
+- **Remaining risk:** The live factory makes the prototype runnable but does not fix the two-call Luna correctness or latency release failure recorded in DBG-018.
+- **What AI suggested:** Keep deterministic dependency injection and add one narrow deployment adapter rather than teaching the domain pipeline to read environment variables.
+- **What I rewrote or rejected:** Rejected silently switching `create_app()` to live behavior because that would make the default deterministic suite credential-dependent and blur test versus deployment modes.
+- **60-second interview explanation:** The model adapter worked in tests and the pressure harness, but the README command used the generic factory with an intentionally empty scripted runner. The app looked complete while eligible replies failed closed. I added a separate fail-fast live factory that owns environment parsing and HTTP cleanup, kept secrets out of application state, and retained the generic factory for deterministic injection. The reviewer command now actually wires the chosen model.
+
+### DBG-020 — Strict provider schema rejected every live analysis request
+
+- **Date and commit:** 2026-08-18; uncommitted M3B.5 audit tree on `734d151`
+- **Status:** Fixed
+- **Expected:** Enabling `strict=true` adds provider-side structural enforcement while the complete local Draft 2020-12 schema remains authoritative for every returned terminal call.
+- **Observed:** The v3 live run returned `provider_error` for all 135 analysis requests. No request reached evidence retrieval or the registered reply agent. The resulting 915.97 ms p95 had zero SLO misses only because work failed early, while answerable coverage was 0/72 and 60 expected-route comparisons failed.
+- **Exact reproduction command:** `set -a; source .env >/dev/null 2>&1; set +a; SIDESTAGE_MODEL_ID=gpt-5.6-luna SIDESTAGE_MODEL_REASONING_EFFORT=none .venv/bin/python -m sidestage.trace.evaluator --scenario fixtures/scenarios/pressure_v1.json --seed 20260817 --model live --output runs/exploratory/evaluation_live_precommit_v3.json`. This historical command is retained exactly, but `.env` is a bare-key file and was not the effective exported credential source; do not reuse the `source .env` prefix. Follow the current README no-echo mapping instead.
+- **Tenant, fixture, seed, and trace ID:** All three synthetic sellers; `pressure_v1`; seed `20260817`; failing trace IDs are retained in the sanitized v3 report.
+- **Log, trace, screenshot, or artifact:** `runs/exploratory/evaluation_live_precommit_v3.json`; the credential scan remained clean.
+- **Impact:** Safety failed closed, but strict mode made the live product unusable and produced a misleadingly low latency number that cannot be treated as SLO evidence.
+- **Hypotheses considered:** Provider outage; rate limit; unsupported model; strict-schema keyword rejection; invalid endpoint reasoning setting.
+- **First incorrect pipeline stage:** Stage 4 provider request before analysis decoding or retrieval.
+- **Root cause:** SideStage sent its complete local JSON Schema as the provider strict schema. The local contract uses `uniqueItems`, `minLength`, `maxLength`, and `const`; [OpenAI Structured Outputs accepts only a subset and rejects unsupported strict schemas](https://developers.openai.com/api/docs/guides/structured-outputs).
+- **Fix:** Preserve the complete immutable schema for startup compilation and local terminal validation, but recursively project a provider-only strict subset: omit local-only length/uniqueness constraints and map `const` to a one-value `enum`. The projection never mutates or weakens the local registered schema.
+- **Files and functions changed:** `src/sidestage/agent_core/model.py::_openai_strict_schema`; `tests/unit/agent_core/test_model_runner.py`.
+- **Verification commands and results:** The RED provider-map tests failed on the unprojected keywords. The focused runner suite passed with `11 passed in 0.21s`; the combined model/analysis/profile suite passed with `28 passed in 0.32s`. The identical v4 live workload progressed through retrieval and reply generation, reached 54/72 supported suggestions, had zero route mismatches and zero hard-invariant violations, and exposed the genuine 4,530.28 ms p95 instead of the fast-failure artifact.
+- **Regression test:** `test_strict_provider_projection_preserves_local_only_schema_validation` checks recursive keyword projection, one-value enum conversion, non-mutation of the registered schema, and secret-free provider payloads.
+- **Remaining risk:** Strict structural output cannot enforce semantic equality between `reply_text`, claim spans, and evidence values; local decoding and the independent broker continue to fail those cases closed. The two-call latency gate remains open.
+- **What AI suggested:** Treat the v3 low latency as invalid, inspect the first failed stage, and project the documented provider subset without deleting local validation constraints.
+- **What I rewrote or rejected:** Rejected disabling local constraints, accepting provider errors as safe scorecard passes, or reporting the fast-failure p95 as a performance improvement.
+- **60-second interview explanation:** Turning on strict tools made every analysis call fail before retrieval. The API only supports a JSON Schema subset, while our local contract was deliberately richer. I kept the full schema for local enforcement and generated a smaller provider copy. The next identical run reached the real pipeline with zero route mismatches, proving the fix; its 4.53-second p95 also confirmed that the earlier 916 ms number was only fast failure.
+
+### DBG-021 — Stale SSE refresh intermittently overwrote a newer R3 response
+
+- **Date and commit:** 2026-08-18; uncommitted M3B.5 audit tree on `734d151`
+- **Status:** Fixed
+- **Expected:** After the authenticated R3-enable POST returns a snapshot with capability version 2, the browser keeps that newer projection and renders `Auto-reply on`.
+- **Observed:** One full deterministic run failed the golden demo because the label returned to `Review first` after the click. The same test passed immediately in isolation, indicating an ordering-sensitive browser projection rather than a deterministic authorization refusal.
+- **Exact reproduction command:** `.venv/bin/pytest -q`; observed result `1 failed, 261 passed, 3 deselected in 43.64s`, failing at `tests/e2e/test_golden_demo.py:230`.
+- **Tenant, fixture, seed, and trace ID:** Velocity Kicks synthetic seller in the fixed golden demo; no retained trace ID because the defect was in browser snapshot ordering after successful server operations.
+- **Log, trace, screenshot, or artifact:** Pytest traceback in the active Codex task; focused rerun passed before the fix, confirming intermittence.
+- **Impact:** The backend capability remained versioned and safe, but the browser could display stale R2 state after an R3 change and issue later commands from an old capability projection.
+- **Hypotheses considered:** R3 authorization refusal; stale expected version; seller-decision transaction failure; an older SSE-triggered snapshot read completing after the POST response.
+- **First incorrect pipeline stage:** Browser projection after a successful HTTP command and concurrent SSE refresh.
+- **Root cause:** `refreshSnapshot()` unconditionally installed any completed snapshot. A request started before the R3 transaction could return after the POST handler had already rendered its newer snapshot, overwriting it despite carrying a lower persisted `stream_offset`.
+- **Fix:** Reject an asynchronous refresh whose `stream_offset` is lower than the currently rendered snapshot. Server offsets remain the monotonic ordering authority; direct POST responses continue to render normally.
+- **Files and functions changed:** `src/sidestage/web/static/app.js::refreshSnapshot`; streaming-order text in `docs/TDD.md`.
+- **Verification commands and results:** Focused golden/R3 browser tests passed with `2 passed in 4.60s`; the complete deterministic suite then passed with `262 passed, 3 deselected in 40.28s`; the expanded M3B.5 group passed with `10 passed, 1 deselected in 19.39s`.
+- **Regression test:** Existing golden and R3 browser tests exercise capability enable/disable amid SSE-backed state changes; the monotonic guard makes an observed stale response unable to replace a newer projection.
+- **Remaining risk:** The browser trusts the server-issued offset and does not merge snapshots field by field. A future remote projection service would need the same or stronger monotonic revision contract.
+- **What AI suggested:** Treat the isolated pass as evidence of a race, inspect direct-response and SSE refresh ordering, and use the already persisted stream offset as the projection fence.
+- **What I rewrote or rejected:** Rejected adding sleeps or retrying the assertion because either would hide the stale-state bug without enforcing ordering.
+- **60-second interview explanation:** HTTP commands and SSE both refresh the same screen. An older SSE read could finish after the R3-enable response and redraw the old capability. The backend was correct, but the screen regressed. Every snapshot already has a monotonic stream offset, so the browser now ignores a refresh older than what it has rendered. The full suite passes without timing sleeps.
+
+### DBG-022 — Sandbox network and localhost restrictions produced false validation failures
+
+- **Date and commit:** 2026-08-18; uncommitted M3B.5 audit tree on `734d151`
+- **Status:** Fixed operationally
+- **Expected:** The explicit live smoke can contact the configured provider, and deterministic browser/server tests can bind ephemeral loopback ports.
+- **Observed:** Without the required execution permission, the live smoke returned a sanitized `provider_error` in under half a second and a single-call smoke reported about 2 ms provider time. The full suite separately produced six `PermissionError: [Errno 1] Operation not permitted` failures while binding `127.0.0.1`; `uv lock --check` was also denied access to uv's read-only cache.
+- **Exact reproduction commands:** `SIDESTAGE_MODEL_ID=gpt-5.6-luna SIDESTAGE_MODEL_REASONING_EFFORT=none .venv/bin/pytest tests/integration/test_live_app_factory.py::test_live_app_factory_executes_the_real_two_call_r2_path -m live_model -q -s`; `.venv/bin/pytest -q`; and `uv lock --check` in the restricted sandbox.
+- **Tenant, fixture, seed, and trace ID:** Velocity Kicks for the live smoke; normal deterministic test fixtures for loopback failures; no product trace established for the blocked provider request.
+- **Log, trace, screenshot, or artifact:** Sanitized pytest output in the active Codex task; no response body or credential was recorded.
+- **Impact:** The first outputs looked like provider and product regressions but did not exercise the intended external or loopback boundaries, so they are excluded from correctness and latency evidence.
+- **Hypotheses considered:** Provider schema failure; rate limit; invalid credential; R3/golden regression; restricted outbound networking and socket binding.
+- **First incorrect pipeline stage:** Execution environment before provider connection or local-server startup.
+- **Root cause:** The managed sandbox denied outbound provider access and local socket binding for those commands.
+- **Fix:** Rerun the same bounded pytest commands with explicit network/localhost permission; do not change product code to work around the sandbox.
+- **Files and functions changed:** This incident entry only.
+- **Verification commands and results:** With the required permission, the two-call live smoke passed with `1 passed in 2.67s`; after the separate DBG-021 UI fix, the complete deterministic suite passed with `262 passed, 3 deselected in 40.28s`; the lock check resolved 47 packages successfully.
+- **Regression test:** Operational verification must grant the declared provider or localhost boundary; default tests still exclude `live_model`.
+- **Remaining risk:** A fast `provider_error` remains intentionally sanitized, so execution-boundary denial must be distinguished using the command environment and elapsed time rather than provider response text.
+- **What AI suggested:** Rerun the exact command with only the missing execution boundary enabled before diagnosing application behavior.
+- **What I rewrote or rejected:** Rejected treating blocked fast failures as provider latency or changing fail-closed product behavior to expose raw provider errors.
+- **60-second interview explanation:** Two validations failed before reaching the system boundary: the live test could not access the network, and browser tests could not bind localhost. The error handling correctly failed closed, which made them resemble product failures. Running the same bounded commands with the necessary permission separated environment denial from real behavior; the live path and full suite then passed.
+
+## 4. Incident record template
+
+```md
+### DBG-___ — Short symptom
+
+- **Date and commit:**
+- **Status:** Open | Diagnosed | Fixed | Verified | Deferred
+- **Expected:**
+- **Observed:**
+- **Exact reproduction command:**
+- **Tenant, fixture, seed, and trace ID:**
+- **Log, trace, screenshot, or artifact:**
+- **Impact:**
+- **Hypotheses considered:**
+- **First incorrect pipeline stage:**
+- **Root cause:**
+- **Fix:**
+- **Files and functions changed:**
+- **Verification commands and results:**
+- **Regression test:**
+- **Remaining risk:**
+- **What I personally did:**
+- **What AI suggested:**
+- **What I rewrote or rejected:**
+- **60-second interview explanation:**
+```
+
+## 5. Streaming debugging checklist
+
+- Confirm raw event acceptance before checking downstream processing.
+- Compare event, seller, show, sequence, idempotency, and trace identifiers across stages.
+- Check queue depth, backpressure decisions, task cancellation, reconnect, and replay offsets.
+- Separate a lost raw event from a deliberately deduplicated or noise-routed event.
+- Filter the tracer by actual routing outcome and compare generated fixtures' evaluator-only expected route with the actual route.
+- Reproduce races with a fixed seed and controlled clock.
+- Verify per-show ordering and cross-question concurrency independently.
+
+## 6. Grounding and guardrail debugging checklist
+
+- Inspect the exact versioned evidence bundle seen by the model.
+- Confirm tenant filtering happened before retrieval or ranking.
+- Distinguish retrieval failure, context assembly failure, model error, and validator error.
+- Identify the exact unsupported claim or conflicting source.
+- Verify stale or missing evidence fails closed.
+- Preserve adversarial input verbatim while keeping it outside trusted instructions and memory.
+
+## 7. Latency debugging checklist
+
+- Use a monotonic clock for every stage.
+- Report queue wait, retrieval, model, validation, emission, and total latency separately.
+- Compare p50, p95, maximum, and timeout counts; do not report averages alone.
+- Attribute cold starts, retries, and injected delays explicitly.
+- Confirm tracing itself does not block reply delivery.
+- Preserve the workload, seed, model, configuration, and commit for every benchmark.
+
+## 8. Action, audit, and compensation debugging checklist
+
+- Confirm actor authentication and tenant scope before parameter validation.
+- Inspect expected and current listing or inventory versions.
+- Verify idempotency behavior under retry and duplicate events.
+- Distinguish execution success from read-after-write verification success.
+- Ensure an audit receipt exists for success, refusal, partial failure, and compensation.
+- Treat rollback as a new conditional compensating event; never erase the original record.
+
+## 9. Failed attempts and reverted fixes
+
+Record fixes that appeared plausible but failed, degraded another invariant, or were reverted. Link the relevant incident and commit.
+
+### 2026-08-18: OpenRouter pressure run accidentally used the OpenAI transport
+
+- **Command:** `SIDESTAGE_MODEL_ID=deepseek/deepseek-v4-flash-0731 SIDESTAGE_MODEL_REASONING_EFFORT=low uv run --env-file .env python -m sidestage.trace.evaluator --scenario fixtures/scenarios/pressure_v1.json --seed 20260817 --model live --strategy one_call_template --output runs/exploratory/openrouter_deepseek_v4_flash_one_call.json`
+- **Observed evidence:** the generated report identified `model.provider` as `openai`, contained no OpenRouter routing configuration or successful provider-call metadata, answered `0/72` supported cases, and recorded 60 route mismatches. Its low reported latency measured provider-error handling, not DeepSeek inference.
+- **Root cause:** the evaluator intentionally defaults `SIDESTAGE_MODEL_PROVIDER` to `openai`; setting an OpenRouter model ID and key does not select the OpenRouter transport. The command omitted `SIDESTAGE_MODEL_PROVIDER=openrouter`.
+- **Fix:** pin `SIDESTAGE_MODEL_PROVIDER=openrouter` in every OpenRouter benchmark command and verify the report's sanitized provider, base URL, and fallback-disabled routing configuration before accepting its metrics.
+- **Verification:** reran with `SIDESTAGE_MODEL_PROVIDER=openrouter` at the same artifact path. The corrected report identifies the OpenRouter transport, fallback-disabled routing, the requested and resolved DeepSeek model, and Inceptron as the resolved provider. It failed the pressure gate with `7/72` supported answerable suggestions, 88 hard timeouts, 55 route mismatches, and `5,022.008 ms` p95. The transport-selection fix is verified; the model/provider cell itself is a valid failed benchmark, not a latency candidate.
+
+### 2026-08-18: OpenRouter rejected tool-capable Kimi and GLM endpoints
+
+- **Commands:** `SIDESTAGE_MODEL_PROVIDER=openrouter SIDESTAGE_MODEL_ID=moonshotai/kimi-k3 SIDESTAGE_MODEL_REASONING_EFFORT=low uv run --env-file .env pytest tests/integration/test_live_app_factory.py::test_live_openrouter_factory_executes_one_template_call -m live_model -q` and the same command with `SIDESTAGE_MODEL_ID=z-ai/glm-5.2 SIDESTAGE_MODEL_REASONING_EFFORT=high`.
+- **Observed evidence:** both one-call smokes failed closed with `provider_error`. Sanitized diagnostics returned HTTP 404 with `No endpoints found that can handle the requested parameters`; OpenRouter reported 13 otherwise available Kimi endpoints and 31 otherwise available GLM endpoints.
+- **Root cause:** the shared Chat Completions payload always included the optional OpenAI parameter `parallel_tool_calls=false`. With OpenRouter `require_parameters=true`, that parameter excluded Kimi K3, whose model catalog advertises `tools` and `tool_choice` but not `parallel_tool_calls`. Removing only that hint made the same Kimi strict 15-tool diagnostic return exactly one call through Together. GLM remains a screening failure until the corrected shared transport is retested.
+- **Fix:** omit `parallel_tool_calls` for OpenRouter requests while retaining it for direct OpenAI. This does not relax the agent contract: the provider-neutral decoder independently requires exactly one registered terminal call and fails closed on multiple calls.
+- **Verification:** focused offline regressions passed with `17 passed, 2 deselected`. The corrected Kimi workflow smoke passed with `1 passed in 2.15s`; GLM still failed closed with `provider_error` and was not promoted. The full offline suite then passed with `288 passed, 4 deselected in 48.16s`.
+
+### 2026-08-18: One-call Luna improved the baseline but still missed the release gate
+
+- **Command:** `SIDESTAGE_MODEL_PROVIDER=openai SIDESTAGE_MODEL_ID=gpt-5.6-luna SIDESTAGE_MODEL_REASONING_EFFORT=none uv run --env-file .env python -m sidestage.trace.evaluator --scenario fixtures/scenarios/pressure_v1.json --seed 20260817 --model live --strategy one_call_template --output runs/exploratory/openai_luna_one_call.json`
+- **Observed evidence:** `one_call_template` reached 66/72 supported answerable suggestions, zero hard timeouts, and `3,414.368583 ms` end-to-end p95. It improved over the matching two-call Luna result of 54/72, 14 hard timeouts, and `4,530.28 ms` p95, but failed the 95% coverage and two-second latency gates. The report recorded 45 SLO misses, `1,548.327167 ms` queue p95, and 18 provider-error outcomes across 135 requests while preserving the safety/no-effect scorecards.
+- **Root cause:** removing the sequential second model call reduced latency and timeout exposure, but the approved 20-chat/two-second burst still exceeded the combined endpoint capacity and four-worker-per-show queue budget. Six answerable requests and twelve safe-terminal requests failed at the provider boundary; later waves accumulated queue delay.
+- **Fix:** no release fix has been accepted. The evaluator, workload, queue time, safety gates, and hard timeout remain unchanged; the cell is retained as a valid failed diagnostic instead of weakening the benchmark.
+- **Verification:** artifact `runs/exploratory/openai_luna_one_call.json`; the report is dirty-tree `Implemented` evidence and has `passed=false`.
+
+### 2026-08-18: Reused pressure fixture retained the baseline profile digest
+
+- **Command:** `jq '{fixture_profile: .fixture_manifest.profile_digest, evaluation_profile: .profile_digest}' runs/exploratory/openai_luna_one_call.json`
+- **Observed evidence:** the nested fixture manifest records baseline digest `sha256:5385...57b8`, while the one-call evaluation records challenger digest `sha256:db3d...3133`.
+- **Root cause:** `pressure_v1` events and oracle are deliberately reused across workflows for comparability, but their retained fixture manifest was generated while bound to the baseline profile. The evaluator adds the active challenger digest at the report level without rejecting or explaining the nested mismatch.
+- **Impact:** event/oracle digests still identify the fixed workload, but the combined artifact cannot be treated as a single internally profile-bound manifest. This weakens reproducibility claims if the distinction is not disclosed.
+- **Fix:** pending design review. The metrics report labels the mismatch. A final artifact schema should separate the workflow-neutral workload manifest from the evaluation profile, or reject an unexplained mismatch.
+- **Verification:** no fix is claimed; the issue is documented in `docs/evidence/m3-pressure-metrics-report.md` and must remain open before final `Measured` evidence.
+
+### 2026-08-18: Commit verification initially used the wrong interpreter and a restricted localhost sandbox
+
+- **Commands:** `pytest -q tests/unit tests/integration tests/e2e --ignore=tests/unit/test_scenario_generator.py --ignore=tests/integration/test_fixture_replay.py --ignore=tests/integration/test_latency_accounting.py --ignore=tests/integration/test_trace_evaluator.py`, followed by the same selection with `.venv/bin/pytest`.
+- **Observed evidence:** the first command stopped during collection because the desktop base interpreter lacked `jsonschema`, FastAPI, and Uvicorn. The project interpreter then ran 256 tests successfully, but six localhost server/browser cases failed with `PermissionError: [Errno 1] Operation not permitted` while binding `127.0.0.1` ephemeral ports.
+- **Root cause:** the first invocation bypassed the repository virtual environment. The second used the correct dependencies but remained inside a filesystem-only sandbox that prohibits local socket binding.
+- **Fix:** use the repository environment and authorize localhost binding for server/browser verification; no application or test code changed.
+- **Verification:** the selected runtime suite passed with `262 passed, 4 deselected in 18.42s`. After commits `7d6c349` and `6ba208a`, the exact full command `.venv/bin/pytest -q` passed with `288 passed, 4 deselected in 43.52s`.
+
+## 10. Known issues and limitations
+
+- M2.3 uses synthetic in-process demo sessions rather than production authentication. SQLite is authoritative and survives a server restart, but opaque demo-session tokens do not.
+- The credential-free `create_app()` factory uses an empty fail-closed scripted runner unless code injects a `ModelRunner`; use the explicit `create_live_app()` factory for the credentialed reviewer path.
+- The M3B eight-stage debugger reads persisted runtime observations and its deterministic behavior is `Verified` at commits `7d6c349` and `6ba208a`. The existing live pressure artifacts predate those commits and remain `Implemented` diagnostics rather than `Measured` release evidence.
+- No current live reply cell passes the release gate. One-call Luna is the strongest result at 66/72 supported answerable suggestions, zero hard timeouts, and 3,414.37 ms p95; it improves materially over two-call Luna but still misses quality and latency. DeepSeek and Kimi OpenRouter pressure cells exceeded five seconds p95 with extensive hard timeouts, and GLM did not pass compatibility screening.
+- Port `8000` was occupied by an unrelated local Uvicorn process during the documentation closeout. This is an environment conflict rather than an application defect; the committed app was smoke-tested on port `8766` without changing application code.
+
+## 11. Interview quick reference
+
+Before submission, populate:
+
+- Exact end-to-end and test commands.
+- Up to three strongest real debugging incidents.
+- Exact files and functions involved in each incident.
+- The trace or test evidence proving each fix.
+- One failed approach and why it was rejected.
+- One remaining limitation and the next diagnostic step.
+- A concise explanation of what was personally built, reused, AI-generated, rewritten, and rejected.
+
+## 12. Related documents
+
+- [Product Requirements Document](PRD.md)
+- [Technical Design Document](TDD.md)
+- [v1 milestone implementation plan](plans/2026-08-17-sidestage-v1-milestones.md)
+- [AI proposal and rejection history](ai-proposal-rejection-history.md)

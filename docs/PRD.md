@@ -1,10 +1,14 @@
 # SideStage Product Requirements Document
 
-> Status: `Accepted` — builder-approved v1 design; implementation evidence is pending
+> Status: `Accepted` — builder-approved v1 design; Milestone 2 and deterministic M3B.1-M3B.4 behavior are `Verified`; the M3B.5 live release gate is open
 >
-> Last updated: 2026-08-17
+> Last updated: 2026-08-18
 >
-> Evidence commit: TBD
+> Milestone 2 terminal implementation commit: `734d151`
+>
+> M3B runtime commit: `7d6c349`; replay/evaluation commit: `6ba208a`
+>
+> Final SideStage evidence commit: TBD
 >
 > Primary depth: Agentic outbound-reply write safety under live state changes
 
@@ -16,7 +20,9 @@ The 48-hour prototype is a synthetic technical demonstration. It does not valida
 
 The livesell emulator is intentionally narrow: it exists to create realistic chat pressure and mutable listing state for bounded agentic-reply and safety evaluation, not to reproduce a full marketplace.
 
-In this PRD, **bounded agentic reply autonomy** means that SideStage reacts to candidate customer questions, assembles approved context, invokes product research when required, and makes one terminal tool call: request a reply write or abstain. A reply request is untrusted intent, not send authority. The application effect broker independently selects the safe outcome—deny, seller review, or authorized R3 auto-reply. Application code owns routing, retrieval, context scope, authorization, freshness, and every side effect. The model receives no read tools, buyer chat cannot create durable memory, and the model never receives direct send or marketplace mutation authority.
+Milestone 3 separates a reusable, domain-neutral **static single-step agent core** from two concrete hardcoded livesell workflows. Each core run accepts one immutable task with preassembled context, makes one model request, and returns exactly one typed terminal intent or failure. M3A also supplies immutable startup profile registration. `one_call_template` registers one `EvidenceTemplateAgent`: application code bulk-loads a bounded tenant-scoped evidence bundle, and the agent selects both the relevant evidence IDs and one approved reply template in a single call before application-owned rendering. `two_call_draft` registers two agents: `EvidencePlannerAgent` requests targeted evidence, application code retrieves it, and `ReplyDrafterAgent` produces a grounded draft intent. There is no general workflow registry or engine. The models have no database access, dynamic tools, memory, direct effect authority, or—on the template workflow—free-form customer-reply authority.
+
+In this PRD, **bounded agentic reply autonomy** means that each concrete workflow reacts to candidate customer questions, binds the trusted listing, and treats every model terminal as untrusted data rather than authority. On the one-call path, the model may select a versioned template, evidence IDs from the supplied bounded snapshot, and only the minimal semantic identifier required by that template, such as a variant ID. It cannot supply price, stock, policy or evidence values, reply prose, database queries, or effect identity. The application renderer materializes an evidence-backed intent, and the independent effect broker selects the safe outcome—deny, seller review, or authorized R3 auto-reply. Application code owns database reads, tenant scope, rendering, authorization, freshness, and every side effect. Buyer chat cannot create durable memory, and no model receives direct send or marketplace mutation authority.
 
 ## 2. Target users and prototype fixtures
 
@@ -24,7 +30,7 @@ The planned prototype defines exactly three isolated synthetic sneaker-reseller 
 
 1. **VelocityKicks:** High-volume new sneakers with size variants. Stresses chat bursts, SKU matching, stock freshness, and latency.
 2. **VaultConsign:** Rare used and consignment sneakers. Stresses condition, authenticity, seller policy, and per-item price floors.
-3. **RotationKicks:** Rapid Buy-It-Now sneaker rotation with mostly single-unit stock. Stresses Push, Swap, Unlist, concurrent purchases, and conditional seller-action rollback without an auction workflow.
+3. **RotationKicks:** Rapid sneaker rotation with mostly single-unit stock. Stresses Push, Swap, Unlist, explicit stock adjustment, and conditional seller-action rollback without a customer-commerce workflow.
 
 These are test fixtures, not real pilot participants.
 
@@ -34,25 +40,26 @@ The first workflow is **high-intent question to grounded answer**:
 
 1. A seeded synthetic replay event or tester-entered custom buyer message enters a seller's live show.
 2. SideStage identifies the tenant and show; preserves the raw event, ask time, show sequence, and listing epoch visible when it was asked; and classifies its eligibility.
-3. A deterministic pre-router removes exact duplicates and only high-certainty noise such as emoji-only messages and allowlisted greetings. Mixed or uncertain messages pass through rather than risk losing a real question.
-4. For each remaining candidate, SideStage assembles evidence and the single model call jointly determines whether a reply is warranted and drafts it. The model requests a reply or abstains with a typed reason; no separate classifier-model call is made.
-5. SideStage resolves the question's bound sneaker listing and retrieves a fresh, versioned bundle of relevant catalog, listing, inventory, seller-policy, and tone evidence. It never silently retargets a pending question after a push or swap.
-6. The model makes one terminal `request_reply_send` or `abstain` tool call. It cannot call a direct send function.
-7. The effect broker treats a reply request as untrusted intent and deterministically validates price, availability, policy, evidence support, tenant scope, freshness, canonical-question uniqueness, and R3 authority. Tone is checked as a reply-quality rule, not an authorization rule.
+3. A deterministic pre-router groups exact and normalization-equivalent duplicates and removes only high-certainty noise such as emoji-only messages and allowlisted greetings. Mixed or uncertain messages pass through rather than risk losing a real question.
+4. Application code resolves the trusted bound sneaker listing and constructs a deterministic allowlisted evidence plan. Exact SKU or product overrides must be unambiguous; uncertainty exits to **Needs seller** before a model request.
+5. Application code retrieves a fresh, versioned bundle of relevant catalog, listing, inventory, seller-policy, and packaged research evidence. It never silently retargets a pending question after a push or swap.
+6. The selected concrete workflow runs. `one_call_template` constructs one immutable task from the question and complete bounded candidate evidence; its registered `EvidenceTemplateAgent` makes one call and selects evidence IDs plus exactly one approved template, `needs_seller`, or `no_response`. `two_call_draft` runs its registered `EvidencePlannerAgent`, targeted retrieval, and registered `ReplyDrafterAgent`. Application code validates every terminal and renders template text from the selected trusted evidence. Neither workflow exposes database, direct-send, or marketplace-mutation tools.
+7. The effect broker treats the rendered reply request as untrusted intent and deterministically validates template eligibility, price, availability, policy, evidence support, tenant scope, freshness, canonical-question uniqueness, and R3 authority. Tone is enforced by the versioned renderer and remains a quality check rather than an authorization source.
 8. The broker denies, holds the candidate for seller review, or sends it under valid R3 authorization. For review, the seller accepts, edits, or dismisses the suggestion. An unchanged AI suggestion is revalidated when accepted. If the seller edits it, SideStage sends the seller's exact version; detected factual, policy, or tone conflicts appear only as non-blocking warnings and never rewrite the text.
-9. A validated synthetic customer purchase emits the sole Inventory Change event and decrements inventory. If aggregate stock across every variant reaches zero, the same atomic transition also Unlists the SKU, closes its listing epoch, and leaves the active slot empty.
-10. Every stage, including bypass and abstention decisions, emits a correlated diagnostic trace.
+9. The debugger renders the eight backend stage signals emitted around these exact component calls. A failed or bypassed component marks dependent stages skipped; the frontend never invents or infers runtime success.
+10. Marketplace actions remain separate, explicit seller controls and never originate from buyer chat or either model call.
 
 ## 4. Actors and authority boundaries
 
 | Actor or source | Trust level | Permitted effect |
 | --- | --- | --- |
-| Authenticated seller | Trusted for its own tenant | Perform explicit Push, Swap, Unlist, and Price Markdown UI actions |
-| Customer purchase | Trusted only after marketplace validation | Apply its Inventory Change and the deterministic zero-stock Unlist consequence |
+| Authenticated seller | Trusted for its own tenant | Perform explicit Push, Swap, Unlist, Price Markdown, and Inventory Change UI actions |
 | Buyer chat | Untrusted | Request information; never authorize marketplace writes or durable memory |
-| AI model | Untrusted intent generator | Call `request_reply_send` or `abstain`; never directly send or mutate marketplace state |
+| Registered evidence planner | Untrusted Workflow 2 retrieval planner | Propose a typed evidence request; never choose tenant scope, establish facts, send, or mutate marketplace state |
+| Registered reply drafter | Untrusted Workflow 2 reply-intent generator | Draft only from retrieved evidence; never directly send or mutate marketplace state |
+| Registered evidence-template agent | Untrusted Workflow 1 evidence/template selector | Select supplied evidence IDs plus one approved template, `needs_seller`, or `no_response`; never provide factual values or reply prose, directly send, or mutate marketplace state |
 
-The synthetic customer surface contains exactly two actions: send a chat message and purchase the currently active listing or one of its variants. There is no bidding, auction, offer, giveaway, cancellation, or customer-facing audit workflow. Internal action receipts remain required for technical auditability and rollback.
+The synthetic customer surface contains exactly one action: send a chat message. Purchase, bidding, auction, offer, giveaway, cancellation, and every other customer-commerce workflow are out of scope. Internal action receipts remain required for technical auditability and rollback of seller operations.
 
 ## 5. Copilot-to-automation ladder
 
@@ -72,7 +79,7 @@ R3 may auto-send only:
 - Current availability for an exact size or variant.
 - Exact-match shipping, payment, or return-policy FAQs.
 
-R3 never sends unrestricted model prose. The broker renders the final short reply from verified typed price, variant-availability, or policy claims using a bounded set of seller-approved tone variants. Free-form model prose remains available for seller-reviewed R2 suggestions.
+R3 never sends unrestricted model prose. On `one_call_template`, application code renders both R2 suggestions and R3 replies from verified typed facts using versioned seller-approved wording and tone variants. Seller edits remain exact seller-authored text. Free-form model prose exists only in the retained `two_call_draft` benchmark baseline and is not the release-path fallback.
 
 Condition, authenticity, fit or sizing advice, research-derived product facts, offers, negotiation, discounts, markdowns, customer-specific order issues, ambiguous questions, uncertain active-SKU matches, and questions bound to a listing that is no longer active always require seller approval.
 
@@ -82,9 +89,9 @@ Immediately before an R3 send, SideStage rechecks the R3 authorization version p
 
 Product research is invoked automatically for a candidate customer question that requires product knowledge. The seller does not initiate a separate research workflow. SideStage retrieves from a pre-indexed, source-backed sneaker corpus packaged with the prototype. Records cover release date, SKU and colorway, MSRP, materials, sizing guidance, and approved authenticity or condition facts.
 
-Every fact carries source, timestamp, and provenance metadata. The model composes a reply candidate from retrieved evidence rather than returning a prewritten answer. Missing, stale, or conflicting evidence produces an explicit abstention. Live open-web research is out of scope so the workflow remains deterministic and compatible with the two-second latency target.
+Every fact carries source, timestamp, and provenance metadata. On the one-call path, the model selects an approved research template and application code renders the candidate from the corresponding trusted record. Missing, stale, conflicting, or unrepresented evidence produces **Needs seller**. Live open-web research is out of scope so the workflow remains deterministic and compatible with the two-second latency target.
 
-All raw messages remain observable. Reactions and high-certainty obvious noise bypass research; duplicates share a canonical question; uncertain messages may reach the single combined classification-and-reply call; and ambiguous, unsupported, and adversarial questions follow explicit guardrail or abstention paths. No event is silently discarded.
+All raw messages remain observable. Reactions and high-certainty obvious noise bypass both model calls; duplicates share a canonical question; uncertain messages may reach the bounded analysis call; and ambiguous, unsupported, and adversarial questions follow explicit retrieval, guardrail, or abstention paths. No event is silently discarded.
 
 Eligible questions enter each seller show's processing queue in FIFO arrival order. SideStage does not semantically prioritize questions, and duplicate volume never raises a question's position. FIFO governs dispatch order; safe results appear as soon as they complete and remain anchored to the originating customer, message, and timestamp.
 
@@ -103,14 +110,17 @@ The prototype keeps the complete epoch history for the bounded synthetic show. T
 - Three isolated seller catalogs, policies, listings, and inventories.
 - Synthetic mock data only, including buffered events and operator-entered custom messages.
 - Streaming ingestion, FIFO ordering, deduplication, eligibility routing, and backpressure behavior.
+- A reusable Python static agent core with immutable task input, one model request, statically registered terminal intents, deadline enforcement, and adapter-neutral traces.
+- One hardcoded reply function with two explicit evaluation strategies: the retained two-call grounded-draft baseline and the one-call approved-template challenger; both reuse trusted evidence retrieval, brokering, and publication without exposing authority to a model.
+- Domain-neutral scripted and live-model harness evaluation, reported separately from livesell end-to-end results.
 - Grounded reply suggestions with evidence and guardrail verdicts.
 - Seller accept, edit, dismiss, and send controls.
 - Per-show, default-off bounded auto-reply toggle with a persistent enabled-state warning and immediate off control.
 - Exactly five marketplace operation types: Push, Swap, Unlist, Price Markdown, and Inventory Change.
-- Seller controls for Push, Swap, Unlist, and Price Markdown using the challenge vocabulary.
-- Purchase-driven Inventory Change plus atomic zero-stock Unlist through a trusted synthetic marketplace event.
-- Internal receipts for all five operations plus verification and conditional rollback for the four seller operations.
-- Seven-stage diagnostic traces and end-to-end latency measurement.
+- Seller controls for all five operations, with Inventory Change presented as a typed stock adjustment.
+- Zero available stock does not implicitly Unlist an active listing; Unlist remains a separate explicit seller action.
+- Internal receipts, verification, and conditional rollback for all five seller operations.
+- Eight-stage diagnostic traces sourced from the exact backend component calls, plus end-to-end latency measurement.
 - Failure injection and deterministic replay.
 
 ### Out of scope
@@ -125,42 +135,50 @@ The prototype keeps the complete epoch history for the bounded synthetic show. T
 - Natural-language seller action commands.
 - Independent or preauthorized AI marketplace mutations.
 - Default-on or open-ended auto-reply.
-- Free-form or manual seller stock adjustment outside the defined Inventory Change event.
-- Customer cancellation, failed-payment, return, or refund workflows.
-- Bids, auctions, offers, giveaways, and any other customer commerce action besides purchase.
+- Free-form stock edits outside the typed Inventory Change control.
+- Purchase, checkout, cancellation, failed-payment, return, or refund workflows.
+- Bids, auctions, offers, giveaways, and every other customer-commerce action.
+- Automatic Unlist as a consequence of inventory reaching zero.
 - A customer-facing audit workflow; auditability is an internal safety requirement.
-- A general-purpose agent framework or dynamic tool loop on the reply path.
+- A general workflow object, workflow registry, DAG executor, or runtime-extensible pipeline.
+- A dynamic, multi-step, or runtime-extensible tool loop; model-callable reads; cross-task agent memory; a template miss that invokes hidden generation; or automatic provider/model fallback on either benchmark path.
+- Treating domain-neutral agent-core evaluation as proof of SideStage grounding, livesell safety, or end-to-end latency.
 - Video broadcasting, checkout, payment processing, fulfillment, and a production marketplace storefront.
 
 ## 8. Technical acceptance scorecard
 
 | Metric | Acceptance target | Status |
 | --- | --- | --- |
-| Grounded-suggestion latency | p95 under 2 seconds | Not measured |
-| Raw event durability | Zero lost ingested events | Not measured |
-| Answerable-question coverage | At least 95% produce supported suggestions | Not measured |
-| Ambiguous or unsupported requests | 100% abstain or escalate | Not measured |
-| Tenant isolation | Zero cross-seller context leakage | Not measured |
-| Prompt-injection resistance | Zero unauthorized instruction adoption, guardrail bypass, cross-tenant disclosure, or write; safe refusals are allowed | Not measured |
-| Write safety | Zero unauthorized, below seller-configured floor, or stale-version writes | Not measured |
-| Action auditability | 100% of executed actions produce complete receipts | Not measured |
-| Seller-action rollback | 100% of supported rollback attempts compensate correctly or refuse safely without overwriting newer state | Not measured |
-| Deduplication | No duplicate replies or writes from duplicate events | Not measured |
-| Trace completeness | Every eligible event has a complete stage trace | Not measured |
-| UX interaction proxy | At most one seller decision for a reply and one form submission for a seller operation | Not measured |
-| Seller-edit integrity | Edited seller text is sent unchanged; detected conflicts produce traceable non-blocking warnings | Not measured |
-| Auto-reply kill switch | No new automatic send after disable acknowledgement | Not measured |
-| Auto-reply freshness | Zero R3 sends against changed authorization, SKU, price, variant-stock, or policy versions | Not measured |
-| Agentic reply-write authorization | Zero direct, unauthorized, duplicate, ungrounded, or unreceipted model-requested sends | Not measured |
-| Temporal listing attribution | Zero silent retargets and zero auto-replies for inactive bound listings | Not measured |
-| Zero-stock transition | Last aggregate unit atomically changes inventory to zero and Unlists; a single sold-out variant never Unlists while another remains | Not measured |
-| Question-state integrity | Every eligible question follows a valid transition with asked and state-change timestamps | Not measured |
+| Grounded-suggestion latency | p95 under 2 seconds | Gate remains open. The latest pre-commit one-call Luna diagnostic improved to 3,414.37 ms all-event workload p95 from the 4,530.28 ms two-call baseline, but still fails; eligible-question p95 is not yet reported separately and is not `Measured` |
+| Static agent terminal contract | 100% of accepted tasks produce exactly one valid terminal intent or a typed core failure, with zero extra model rounds | `Verified` by the commit-bound deterministic suite; live provider results remain diagnostic |
+| Static agent isolation | Zero adapter authority, credentials, effect identities, or evaluator labels enter model-visible context | `Verified` by deterministic isolation and projection tests at code head `6ba208a` |
+| Agent-core latency accounting | Report queue, provider, parse, and total core p50, p95, maximum, SLO misses, and timeouts separately from the rest of the hardcoded reply path | `Verified` structurally by deterministic tests; retained live timing reports are not `Measured` |
+| Raw event durability | Zero lost ingested events | `Verified` for deterministic M2 ingestion/reconnect and the committed M3B scripted suite; pre-commit live diagnostics also report zero loss |
+| Answerable-question coverage | At least 95% produce supported suggestions | Committed scripted run: 72/72; latest pre-commit one-call Luna diagnostic: 66/72 (91.7%) broker-accepted grounded suggestions, improved from two-call 54/72 but below the gate. Expected-template/evidence semantic accuracy is not yet scored separately |
+| Ambiguous or unsupported requests | 100% abstain or escalate | `Verified` in committed scripted cases; the latest pre-commit Luna diagnostic reports 24/24 safe |
+| Tenant isolation | Zero cross-seller context leakage | `Verified` for M2 and the committed M3B deterministic suite; pre-commit live diagnostics report zero Copilot evidence leakage |
+| Prompt-injection resistance | Zero unauthorized instruction adoption, guardrail bypass, cross-tenant disclosure, or write; safe refusals are allowed | `Verified` in committed scripted safety cases; the latest pre-commit Luna diagnostic reports 24/24 no-effect |
+| Write safety | Zero unauthorized, below seller-configured floor, or stale-version writes | `Verified` by the committed deterministic race matrix; pre-commit live diagnostics report zero unauthorized R3 writes |
+| Action auditability | 100% of executed actions produce complete receipts | `Verified` in the deterministic M2 suite at `734d151` |
+| Seller-action rollback | 100% of supported rollback attempts compensate correctly or refuse safely without overwriting newer state | `Verified` in the deterministic M2 suite at `734d151` |
+| Deduplication | No duplicate replies or writes from duplicate events | `Verified` in committed scripted pressure; the latest pre-commit live diagnostic groups 60/60 duplicate children |
+| Trace completeness | Every eligible event has a complete stage trace | `Verified` in the committed deterministic suite; pre-commit live reports contain zero incomplete/drifted traces |
+| UX interaction proxy | At most one seller decision for a reply and one form submission for a seller operation | `Verified` in committed browser tests; not a real operator-load measurement |
+| Seller-edit integrity | Edited seller text is sent unchanged; detected conflicts produce traceable non-blocking warnings | `Verified` in committed R2/browser tests |
+| Auto-reply kill switch | No new automatic send after disable acknowledgement | `Verified` in committed deterministic race/browser tests |
+| Auto-reply freshness | Zero R3 sends against changed authorization, SKU, price, variant-stock, or policy versions | `Verified` in committed deterministic race tests |
+| Agentic reply-write authorization | Zero direct, unauthorized, duplicate, ungrounded, or unreceipted model-requested sends | `Verified` in committed scripted safety tests; pre-commit live diagnostics report zero violations |
+| Temporal listing attribution | Zero silent retargets and zero auto-replies for inactive bound listings | `Verified` in committed routing/race tests and scripted safety evaluation |
+| Inventory adjustment safety | Seller adjustments are nonnegative, version-checked, audited, and never implicitly change listing state | `Verified` in the deterministic M2 suite at `734d151` |
+| Question-state integrity | Every eligible question follows a valid transition with asked and state-change timestamps | `Verified` in committed deterministic lifecycle tests |
 
 The UX interaction proxy is not proof of real workload reduction. AI-suggestion guardrail metrics and seller-edited warning metrics are reported separately; seller-authored overrides are not represented as AI-generated safe replies.
 
 ## 9. Degraded experience
 
 When an eligible high-intent question cannot produce a safe suggestion, SideStage creates a **Needs seller** card with a concise reason: previous listing, missing evidence, conflicting evidence, stale inventory, guardrail failure, or timeout. It never exposes an unsafe partial draft. The seller may answer manually from the card.
+
+A malformed, missing, multiple, unknown, or late terminal call is a typed static-agent failure. The core performs no effect and returns the failure to the hardcoded reply function, which maps it to the appropriate `needs_seller` or diagnostic outcome. A core failure never grants application code permission to infer or repair a model intent.
 
 Noise and duplicate messages do not create failure cards; they remain observable in the raw stream and diagnostic tracer. Crossing two seconds records an SLO miss but does not discard an otherwise fresh result. Results arriving after a separate hard timeout are discarded. If the underlying listing, inventory, or policy snapshot changes during generation, SideStage may revalidate once before the hard timeout; otherwise it marks the candidate stale and requires the seller.
 
@@ -171,7 +189,7 @@ Eligible questions wait in a large but finite FIFO queue sized from the defined 
 The seller experience is a minimal, elegant two-surface technical demo:
 
 - **Live Chat:** A chronological stream of every raw buffered mock event plus custom messages entered by the demo operator.
-- **Copilot Inbox:** A focused supervision and operations surface for questions that require a reply decision. Noise does not create an Inbox card. The seller sees each reply beside only the relevant current listing, inventory, and policy facts; enables or disables bounded auto-reply; reviews or edits suggestions; performs Push, Swap, Unlist, and Price Markdown operations; observes customer-driven Inventory Change events; and may Undo only the latest still-version-valid seller operation.
+- **Copilot Inbox:** A focused supervision and operations surface for questions that require a reply decision. Noise does not create an Inbox card. The seller sees each reply beside only the relevant current listing, inventory, and policy facts; enables or disables bounded auto-reply; reviews or edits suggestions; performs Push, Swap, Unlist, Price Markdown, and Inventory Change operations; and may Undo only the latest still-version-valid seller operation.
 
 A compact header identifies the seller, show, and active listing and contains the R3 toggle. Its persistent warning appears whenever auto-reply is enabled. The diagnostic tracer remains a separate developer view and can filter events by actual routing outcome: all, eligible, noise, duplicate, ambiguous or unsupported, and adversarial. The seller workspace excludes extra dashboards, analytics panels, and navigation that do not directly serve the technical demonstration.
 
@@ -190,16 +208,16 @@ A duplicate question displays **Grouped** and links to its canonical question. A
 
 ## 11. Synthetic pressure workload
 
-The emulator generates synthetic chat with pseudorandom variation and records the seed on every run. A seed determines message text, synthetic usernames, inter-arrival timing, and ordering within the workload constraints, so a failure can be replayed exactly. The default pressure profile gives each seller 120 events over 30 seconds:
+The emulator generates synthetic chat with pseudorandom variation and records the seed on every run. A seed determines message text, synthetic usernames, inter-arrival timing, and ordering within the workload constraints, so a failure can be replayed exactly. The default pressure profile gives each seller 120 emitted chat events over 30 seconds:
 
 - 60 irrelevant noise or reaction events, including emoji-only messages, greetings, cheers, and off-topic banter.
 - 20 exact or normalization-equivalent duplicate events, including surface differences in case, punctuation, or emoji.
 - 24 unique answerable questions.
-- 8 ambiguous or unsupported questions.
-- 8 prompt-injection attempts.
+- 8 distinct ambiguous or unsupported questions.
+- 8 distinct prompt-injection attempts.
 - One burst of 20 events within 2 seconds.
 
-Across three tenants, this yields 72 eligible answerable-question traces plus noise, ambiguity, duplication, and adversarial cases.
+These are mutually exclusive emitted-event quotas. The 24 answerable events establish 24 distinct canonical questions. The 20 duplicate events are additional children of 20 of those questions—one child per selected parent—and do not create or consume another unique-answerable slot. The burst is a subset of the 120 events, not 20 additional events. Across three tenants, this yields 72 unique eligible answerable-question traces plus noise, ambiguity, duplication, and adversarial cases.
 
 Generated fixtures carry evaluator-only expected routing labels that are never placed in model context. The tracer can compare this expected label with the actual route so the tester can inspect false filtering and missed filtering. The tester can also inject arbitrary custom messages into a running show. Custom messages are stamped with the currently displayed listing epoch, use the same ingestion, tracing, queueing, and guardrail path as generated messages, and are tagged only by input origin. Regression tests use fixed recorded seeds; exploratory pressure runs may use a new seed, which must be printed and retained for replay.
 
@@ -229,19 +247,27 @@ These are future-pilot hypotheses, not prototype acceptance criteria or measured
 
 ## 14. Implementation milestones
 
-### Milestone 1 — Synthetic Data Contracts
+### Milestone 1 — P0 Presentation-Ready Synthetic Data
 
-Define and validate versioned JSON contracts for the three seller fixtures, catalogs, policies, listings, variants, inventory, seeded chat scenarios, expected evaluator labels, and replay metadata. Exit when the fixtures validate, identical seeds reproduce identical events, different seeds vary only approved fields, and cross-tenant references fail validation.
+Directly author one static file containing the three seller personas, their tone and policies, catalogs, listings, variants, inventory, and product facts. Add one small prepared chat-message pool. Exit when the two static artifacts pass their approved integrity and coverage checks. Do not create a standalone Milestone 1 frontend: the approved M2.0 workspace is the single UI, and M2.1 verifies that it renders the imported M1 data correctly before marketplace behavior is treated as runtime evidence. Do not build provider, replay, or Copilot infrastructure in this milestone.
 
 ### Milestone 2 — Livesell Marketplace Emulator
 
-Run the livesell interaction without AI: buffered and custom chat, listing epochs, Push, Swap, Unlist, Price Markdown, customer Purchase to Inventory Change, linked zero-stock Unlist, internal receipts, and supported seller-action rollback. Exit when the five operation types and temporal races pass deterministic tests and the minimal marketplace UI works end to end with the copilot disabled.
+Create the typed runtime and import the static seller data, first validating its exact seller, policy, catalog, inventory, prepared-chat, and custom-chat projection through the approved M2.0 workspace. Then run the livesell interaction without AI: buffered and custom chat, listing epochs, five explicit seller actions—Push, Swap, Unlist, Price Markdown, and Inventory Change—plus internal receipts and conditional rollback. Exit when the data projection, five operation types, and temporal races pass deterministic tests and the minimal marketplace UI works end to end with the copilot disabled.
 
-### Milestone 3 — Reply Agent and Copilot
+Milestone 2 is `Verified` at terminal implementation commit `734d151`, following the reviewed M2.0, M2.1, debugger, and M2.2 commits. The retained closeout record contains the exact 75-test gate, runtime smoke check, commit sequence, and boundary of the evidence. It proves the synthetic non-AI marketplace and streaming environment; it does not prove agentic reply safety, the two-second reply SLO, GMV lift, conversion improvement, or operator-load reduction.
 
-Add eligibility routing, bounded context retrieval, terminal `request_reply_send` or `abstain`, the effect broker, R2 review, R3 auto-reply, Copilot Inbox, diagnostic traces, safety evaluation, and latency reporting. Exit when deterministic agentic-write tests pass, synthetic pressure evaluation runs from one command, and p95 latency is measured against the approved boundary.
+### Milestone 3A — General Static Agent Harness
 
-Marketplace operations belong to Milestone 2 rather than being described as an AI copilot feature: they create the mutable environment against which Milestone 3's reply agent is tested.
+Build a domain-neutral asynchronous Python agent core around one immutable task, one provider request per run, and exactly one statically registered terminal intent. Export `register_profile()` and an immutable startup `AgentProfileRegistry`. Add a scripted model, live-model adapter, bounded FIFO scheduling, deadline propagation, strict terminal-call validation, adapter-neutral tracing, deterministic generic scenarios, failure injection, and separate queue/provider/parse/total latency reporting. Exit when the core and registration API pass fixed contract and pressure tests without importing seller, listing, catalog, marketplace, or livesell fixtures. M3A evidence is labeled `evaluation_scope=agent_core` and is not presented as SideStage product evidence.
+
+### Milestone 3B — Livesell Reply Adapter and Copilot
+
+Implement one hardcoded `process_customer_reply()` function with two closed strategies. Preserve `two_call_draft` as the benchmark baseline. Add `one_call_template`, which performs eligibility routing, temporal listing attribution, deterministic allowlisted evidence planning and retrieval, one registered M3A template-selection call, application-owned rendering, and the same independent reply effect broker. Add R2 review, R3 auto-reply, Copilot Inbox, eight-stage backend traces, deterministic livesell generation and replay, safety evaluation, and full latency/cost reporting. Benchmark both strategies through OpenRouter with explicit model IDs, provider fallback disabled, identical workload inputs, and recorded resolved provider metadata. Exit only when one approved release configuration passes deterministic safety and coverage gates and measures p95 below two seconds across the unchanged end-to-end SideStage boundary.
+
+Current state: both closed workflows defined by the M3.1-M3.4 compatibility map are committed in `7d6c349`, and replay/evaluation support is committed in `6ba208a`. The commit-bound deterministic suite passes with `288 passed, 4 deselected in 43.52s`; the fixed 360-event scripted one-call diagnostic makes 135 model requests, supports 72/72 answerable parents, and retains zero values for every recorded hard invariant. The same-model pre-commit direct-OpenAI comparison favors `one_call_template`: Luna improved from 54/72 supported answers, 14 hard timeouts, and 4,530.28 ms p95 on `two_call_draft` to 66/72, zero hard timeouts, and 3,414.37 ms p95 on the challenger. It still fails the 95% coverage and two-second latency gates. Fallback-disabled OpenRouter pressure cells also failed: DeepSeek V4 Flash resolved to Inceptron and reached 7/72 with 88 hard timeouts and 5,022.01 ms p95; Kimi K3 resolved to Together and reached 17/72 with 87 hard timeouts and 5,024.85 ms p95. GLM 5.2 did not pass the strict one-call compatibility smoke and was not promoted to pressure. Those live runs remain pre-commit `Implemented` diagnostics, not `Measured` release evidence. M3B.5 remains open, and M3B.6 final live evidence remains pending.
+
+Marketplace operations belong to Milestone 2 rather than being described as an AI copilot feature: they create the mutable environment consumed only by the Milestone 3B reply path. Milestone 3A has no dependency on M1 seller/chat fixtures or M2 marketplace state.
 
 ## 15. Related documents
 
@@ -249,3 +275,5 @@ Marketplace operations belong to Milestone 2 rather than being described as an A
 - [v1 milestone implementation plan](plans/2026-08-17-sidestage-v1-milestones.md)
 - [AI proposal and rejection history](ai-proposal-rejection-history.md)
 - [Debugging process and evidence log](debug-process.md)
+- [Milestone 2 closeout evidence](evidence/m2-closeout.md)
+- [M3 pressure metrics report](evidence/m3-pressure-metrics-report.md)
