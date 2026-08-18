@@ -1,0 +1,22 @@
+{
+  "schema_version": "sidestage.livesell_scenario.v1",
+  "scenario_id": "pressure_v1",
+  "generator_version": "1.0.0",
+  "seed": 20260817,
+  "run_started_at": "2026-08-17T12:00:00.000Z",
+  "duration_ms": 30000,
+  "burst_window": {
+    "start_ms": 10000,
+    "end_ms": 12000,
+    "event_count": 20
+  },
+  "per_seller_quotas": {
+    "noise": 60,
+    "answerable_parent": 24,
+    "duplicate_child": 20,
+    "ambiguous_or_unsupported": 8,
+    "prompt_injection": 8
+  },
+  "scenario_capabilities": [],
+  "model_config_ref": "sidestage-livesell-v1"
+}
