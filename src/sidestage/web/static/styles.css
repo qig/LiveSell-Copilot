@@ -280,6 +280,16 @@
     background: var(--panel);
   }
 
+  button.status-chip {
+    cursor: pointer;
+  }
+
+  .r3-toggle.is-enabled {
+    border-color: var(--amber);
+    background: var(--amber-soft);
+    color: var(--amber);
+  }
+
   .status-dot,
   .live-pip {
     width: 8px;
@@ -902,6 +912,31 @@
     overflow-y: auto;
   }
 
+  .r3-warning {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 18px;
+    border-bottom: 1px solid #e4c48e;
+    background: var(--amber-soft);
+    color: #6d4300;
+  }
+
+  .r3-warning[hidden] {
+    display: none;
+  }
+
+  .r3-warning strong {
+    font-size: 12px;
+  }
+
+  .r3-warning p {
+    margin-top: 3px;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
   .active-cue {
     min-height: 206px;
     padding: 18px;
@@ -1077,10 +1112,194 @@
     line-height: 1.45;
   }
 
+  .copilot-section,
   .operation-section,
   .catalog-section {
     padding: 16px 18px;
     border-bottom: 1px solid var(--border);
+  }
+
+  .copilot-assurance {
+    margin: -3px 0 13px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .copilot-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .copilot-empty {
+    padding: 18px;
+    border: 1px dashed var(--border-strong);
+    background: #fbfbfa;
+  }
+
+  .copilot-empty strong {
+    font-size: 13px;
+  }
+
+  .copilot-empty p {
+    margin-top: 5px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .copilot-card {
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong);
+    background: var(--panel);
+  }
+
+  .copilot-card--awaiting_review {
+    border-left-color: var(--blue);
+  }
+
+  .copilot-card--needs_seller {
+    border-left-color: var(--amber);
+  }
+
+  .copilot-card--answered_by_seller,
+  .copilot-card--auto_answered {
+    border-left-color: var(--green);
+  }
+
+  .copilot-card-header,
+  .copilot-card-header > div,
+  .copilot-context,
+  .copilot-facts,
+  .copilot-actions {
+    display: flex;
+    align-items: center;
+  }
+
+  .copilot-card-header {
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .copilot-card-header > div {
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .copilot-card-header strong {
+    overflow: hidden;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .copilot-card-header time,
+  .copilot-state,
+  .copilot-badge,
+  .copilot-facts {
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 650;
+  }
+
+  .copilot-state {
+    flex: none;
+    padding: 3px 6px;
+    border-radius: 2px;
+    background: var(--blue-soft);
+    color: var(--blue);
+    text-transform: uppercase;
+  }
+
+  .copilot-card--needs_seller .copilot-state {
+    background: var(--amber-soft);
+    color: var(--amber);
+  }
+
+  .copilot-card--answered_by_seller .copilot-state,
+  .copilot-card--auto_answered .copilot-state {
+    background: var(--green-soft);
+    color: var(--green);
+  }
+
+  .copilot-question {
+    margin-top: 9px;
+    font-size: 14px;
+    font-weight: 680;
+    line-height: 1.42;
+    overflow-wrap: anywhere;
+  }
+
+  .copilot-context {
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 9px;
+  }
+
+  .copilot-badge {
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    text-transform: uppercase;
+  }
+
+  .copilot-badge--previous {
+    border-color: #e4c48e;
+    background: var(--amber-soft);
+    color: var(--amber);
+  }
+
+  .copilot-facts {
+    gap: 10px;
+  }
+
+  .copilot-facts span + span {
+    padding-left: 10px;
+    border-left: 1px solid var(--border);
+  }
+
+  .copilot-reply-field {
+    display: grid;
+    gap: 6px;
+    margin-top: 12px;
+  }
+
+  .copilot-reply-field > span {
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .copilot-reply-field textarea {
+    width: 100%;
+    min-height: 72px;
+    resize: vertical;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: #fbfbfa;
+    color: var(--ink);
+    font: 13px/1.45 var(--sans);
+  }
+
+  .copilot-resolution {
+    margin-top: 11px;
+    padding: 8px 10px;
+    background: #f4f4f1;
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .copilot-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
   }
 
   .operation-dock {

@@ -2,7 +2,6 @@
   "use strict";
 
   const SESSION_KEY = "sidestage.m2.session";
-  const TRACE_FIXTURE_URL = "/fixtures/debugger/reply_trace_scenarios.json";
   const IMPORT_TRACE_URL = "/api/debug/import-trace";
   const IMPORT_STAGE_CATALOG = [
     {number: 1, key: "source_read", label: "Read source"},
@@ -11,12 +10,9 @@
     {number: 4, key: "tenant_index_build", label: "Build tenant indexes"},
   ];
   const dom = {};
-
-  let traceDocument = null;
-  let activeScenario = null;
-  let activeEvent = null;
+  let runtimeProjection = null;
+  let activeTrace = null;
   let activeStageNumber = 1;
-  let traceHasRun = false;
   let marketplaceEventSource = null;
 
   document.addEventListener("DOMContentLoaded", boot);
@@ -25,56 +21,8 @@
     cacheDom();
     bindEvents();
     initializeImportTrace();
-
-    const [traceResult] = await Promise.allSettled([fetchJson(TRACE_FIXTURE_URL)]);
-
-    if (traceResult.status === "fulfilled") {
-      try {
-        validateTraceDocument(traceResult.value);
-        traceDocument = traceResult.value;
-        initializeTraceControls();
-      } catch (error) {
-        renderTraceError(error);
-      }
-    } else {
-      renderTraceError(traceResult.reason);
-    }
-
-    await renderMarketplace();
+    await Promise.all([renderRuntimeTraces(), renderMarketplace()]);
     connectMarketplaceEvents();
-  }
-
-  async function fetchJson(url, options = {}) {
-    const response = await fetch(url, options);
-    if (!response.ok) throw new Error(`Unable to load ${url} (${response.status})`);
-    return response.json();
-  }
-
-  function validateTraceDocument(documentValue) {
-    if (
-      documentValue?.schema_version !== "sidestage.debugger_projection.v1" ||
-      documentValue?.synthetic !== true ||
-      documentValue?.runtime_source !== "presentation_fixture"
-    ) {
-      throw new Error("Trace fixture identity or evidence labeling is invalid.");
-    }
-
-    if (documentValue.stage_catalog?.length !== 7 || !documentValue.scenarios?.length) {
-      throw new Error("Trace fixture must provide seven stages and at least one scenario.");
-    }
-
-    const stageKeys = documentValue.stage_catalog.map((stage) => stage.key).join("|");
-    documentValue.scenarios.forEach((scenario) => {
-      if (!scenario.events?.length) throw new Error(`Scenario ${scenario.scenario_id} has no events.`);
-      scenario.events.forEach((event) => {
-        const eventKeys = event.stages?.map((stage) => stage.key).join("|");
-        if (eventKeys !== stageKeys) throw new Error(`Trace ${event.trace_id} has an invalid stage order.`);
-        if (!event.first_stop) throw new Error(`Trace ${event.trace_id} must identify where the current build stops.`);
-        if (event.stages.some((stage) => stage.state === "passed")) {
-          throw new Error(`Trace ${event.trace_id} cannot mark simulated reply work as passed.`);
-        }
-      });
-    });
   }
 
   function cacheDom() {
@@ -133,187 +81,127 @@
   }
 
   function bindEvents() {
-    dom.refresh.addEventListener("click", () => renderMarketplace());
+    dom.refresh.addEventListener("click", () => Promise.all([renderRuntimeTraces(), renderMarketplace()]));
+    dom.traceRun.addEventListener("click", renderRuntimeTraces);
+    dom.traceReset.addEventListener("click", () => {
+      dom.traceScenario.value = "all";
+      renderRuntimeTraces();
+    });
+    dom.traceScenario.addEventListener("change", renderRuntimeTraces);
+    dom.traceEvent.addEventListener("change", () => {
+      activeTrace = runtimeProjection?.traces.find((trace) => trace.trace_id === dom.traceEvent.value) || null;
+      activeStageNumber = decisiveStage(activeTrace);
+      renderTrace();
+    });
+    dom.importRun.addEventListener("click", runImportTrace);
     document.querySelectorAll("[data-ledger-tab]").forEach((tab) => {
       tab.addEventListener("click", () => activateTab(tab.dataset.ledgerTab));
     });
     window.addEventListener("beforeunload", () => marketplaceEventSource?.close());
-
-    dom.traceScenario.addEventListener("change", () => {
-      selectScenario(dom.traceScenario.value);
-    });
-    dom.traceEvent.addEventListener("change", () => {
-      activeEvent = activeScenario.events.find((event) => event.event_id === dom.traceEvent.value);
-      activeStageNumber = decisiveStage(activeEvent);
-      renderTrace();
-    });
-    dom.traceRun.addEventListener("click", runTrace);
-    dom.importRun.addEventListener("click", runImportTrace);
-    dom.traceReset.addEventListener("click", () => {
-      selectScenario(traceDocument.scenarios[0].scenario_id);
-      dom.traceStatus.textContent = "Reset to the first prepared projection. Run it when ready.";
-    });
   }
 
-  function initializeImportTrace() {
-    renderImportStages(
-      IMPORT_STAGE_CATALOG.map((stage) => ({...stage, state: "ready", duration_ms: 0})),
-    );
+  async function fetchJson(url, options = {}) {
+    const response = await fetch(url, {...options, cache: "no-store"});
+    if (!response.ok) throw new Error(`Unable to load runtime data (${response.status})`);
+    return response.json();
   }
 
-  async function runImportTrace() {
-    dom.importRun.disabled = true;
-    dom.importRuntime.className = "import-runtime-badge";
-    dom.importRuntime.textContent = "CONNECTING";
-    dom.importStatus.textContent = "Checking catalog data with the backend loader…";
+  function sessionToken() {
+    return sessionStorage.getItem(SESSION_KEY);
+  }
 
+  async function renderRuntimeTraces() {
+    const token = sessionToken();
+    if (!token) {
+      renderTraceEmpty("Open the seller workspace first to create a server-owned session.");
+      return;
+    }
+    dom.traceRun.disabled = true;
     try {
-      const trace = await fetchJson(IMPORT_TRACE_URL, {cache: "no-store"});
-      validateImportTrace(trace);
-      renderImportTrace(trace);
-    } catch (_error) {
-      renderImportOffline();
+      const route = dom.traceScenario.value && dom.traceScenario.value !== "all"
+        ? `&actual_route=${encodeURIComponent(dom.traceScenario.value)}`
+        : "";
+      const projection = await fetchJson(
+        `/api/debug/copilot?session_token=${encodeURIComponent(token)}${route}`,
+      );
+      if (
+        projection.schema_version !== "sidestage.runtime_trace_projection.v1" ||
+        projection.runtime_source !== "process_customer_reply.sqlite"
+      ) {
+        throw new Error("Unexpected runtime trace source.");
+      }
+      runtimeProjection = projection;
+      initializeRouteFilters(projection);
+      const priorTraceId = activeTrace?.trace_id;
+      const priorStageNumber = activeStageNumber;
+      activeTrace = projection.traces.find((trace) => trace.trace_id === priorTraceId)
+        || projection.traces[0]
+        || null;
+      activeStageNumber = activeTrace?.trace_id === priorTraceId
+        && activeTrace.stages.some((stage) => stage.stage_number === priorStageNumber)
+        ? priorStageNumber
+        : decisiveStage(activeTrace);
+      renderTraceSelector();
+      renderTrace();
+      dom.traceStatus.textContent = projection.trace_count
+        ? `${projection.trace_count} persisted trace${projection.trace_count === 1 ? "" : "s"} · actual route ${projection.actual_route_filter}.`
+        : `No persisted traces match actual route ${projection.actual_route_filter}.`;
+    } catch (error) {
+      renderTraceEmpty(error.message);
     } finally {
-      dom.importRun.disabled = false;
+      dom.traceRun.disabled = false;
     }
   }
 
-  function validateImportTrace(trace) {
-    if (
-      trace?.schema_version !== "sidestage.import_trace.v1" ||
-      trace?.runtime_source !== "m2_1_typed_loader" ||
-      trace?.durability !== "ephemeral"
-    ) {
-      throw new Error("Import trace identity is invalid.");
-    }
-    if (!Array.isArray(trace.stages) || trace.stages.length !== IMPORT_STAGE_CATALOG.length) {
-      throw new Error("Import trace has an invalid stage count.");
-    }
-    const expectedKeys = IMPORT_STAGE_CATALOG.map((stage) => stage.key).join("|");
-    if (trace.stages.map((stage) => stage.key).join("|") !== expectedKeys) {
-      throw new Error("Import trace has an invalid stage order.");
-    }
-    if (!trace.stages.every((stage) => ["passed", "failed", "skipped"].includes(stage.state))) {
-      throw new Error("Import trace has an invalid stage state.");
-    }
-  }
-
-  function renderImportTrace(trace) {
-    const accepted = trace.status === "accepted";
-    dom.importRuntime.className = `import-runtime-badge ${accepted ? "is-runtime" : "is-rejected"}`;
-    dom.importRuntime.textContent = "LIVE BACKEND CHECK";
-    dom.importStatus.textContent = accepted
-      ? "Backend catalog check completed."
-      : `Catalog import stopped at stage ${trace.first_stop?.stage || "unknown"}.`;
-    renderImportStages(trace.stages);
-
-    dom.importDiagnosis.className = `import-trace-diagnosis ${accepted ? "is-accepted" : "is-rejected"}`;
-    dom.importDiagnosis.querySelector(".import-trace-mark").textContent = accepted ? "✓" : "!";
-    dom.importDiagnosis.querySelector("div > span").textContent = accepted
-      ? "Import accepted"
-      : "First rejected stage";
-
-    const counts = trace.outcome?.counts;
-    if (accepted && counts) {
-      dom.importDiagnosis.querySelector("strong").textContent = `Accepted ${counts.sellers} sellers · tenant indexes ready`;
-      dom.importCounts.textContent = `${counts.sellers} sellers · ${counts.listings} listings · ${counts.variants} variants`;
-    } else {
-      dom.importDiagnosis.querySelector("strong").textContent = trace.first_stop
-        ? `Stage ${trace.first_stop.stage} · ${trace.first_stop.reason_code}`
-        : "Import rejected without a stage result";
-      dom.importCounts.textContent = "No catalog emitted";
-    }
-
-    dom.importTraceId.textContent = trace.trace_id;
-    dom.importSource.textContent = trace.source?.filename || "—";
-    dom.importDigest.textContent = trace.source?.sha256
-      ? `${trace.source.sha256.slice(0, 12)}…`
-      : "—";
-    dom.importPayload.textContent = prettyJson(trace);
-  }
-
-  function renderImportStages(stages) {
-    dom.importStageRail.innerHTML = stages
-      .map(
-        (stage) => `
-          <article class="import-stage is-${escapeHtml(stage.state)}" data-import-stage="${stage.number}">
-            <span class="import-stage-number">${stage.number}</span>
-            <span class="import-stage-copy">
-              <strong>${escapeHtml(stage.label)}</strong>
-              <small>${escapeHtml(stage.state)}${stage.state === "ready" ? "" : ` · ${escapeHtml(stage.duration_ms)} ms`}</small>
-            </span>
-          </article>
-        `,
-      )
+  function initializeRouteFilters(projection) {
+    const current = projection.actual_route_filter || "all";
+    const labels = {
+      all: "All actual routes",
+      eligible: "Eligible",
+      noise: "Noise",
+      duplicate: "Duplicate",
+      ambiguous_or_unsupported: "Ambiguous / unsupported",
+      adversarial: "Adversarial",
+    };
+    dom.traceScenario.innerHTML = ["all", ...Object.keys(projection.route_counts)]
+      .map((route) => {
+        const count = route === "all"
+          ? Object.values(projection.route_counts).reduce((sum, value) => sum + value, 0)
+          : projection.route_counts[route];
+        return `<option value="${escapeHtml(route)}">${escapeHtml(labels[route])} · ${count}</option>`;
+      })
       .join("");
-  }
-
-  function renderImportOffline() {
-    dom.importRuntime.className = "import-runtime-badge is-offline";
-    dom.importRuntime.textContent = "BACKEND OFFLINE";
-    dom.importStatus.textContent = "Backend check unavailable. Start the local SideStage server and retry.";
-    dom.importDiagnosis.className = "import-trace-diagnosis is-offline";
-    dom.importDiagnosis.querySelector(".import-trace-mark").textContent = "×";
-    dom.importDiagnosis.querySelector("div > span").textContent = "Transport unavailable";
-    dom.importDiagnosis.querySelector("strong").textContent = "No backend import was observed";
-    dom.importCounts.textContent = "No catalog emitted";
-    dom.importTraceId.textContent = "—";
-    dom.importSource.textContent = "—";
-    dom.importDigest.textContent = "—";
-    dom.importPayload.textContent = "null";
-    initializeImportTrace();
-  }
-
-  function initializeTraceControls() {
-    dom.traceScenario.innerHTML = traceDocument.scenarios
-      .map(
-        (scenario) =>
-          `<option value="${escapeHtml(scenario.scenario_id)}">${escapeHtml(scenario.label)}</option>`,
-      )
-      .join("");
+    dom.traceScenario.value = current;
     dom.traceScenario.disabled = false;
-    dom.traceRun.disabled = false;
     dom.traceReset.disabled = false;
-    selectScenario(traceDocument.scenarios[0].scenario_id);
   }
 
-  function selectScenario(scenarioId) {
-    activeScenario = traceDocument.scenarios.find((scenario) => scenario.scenario_id === scenarioId);
-    if (!activeScenario) return;
-
-    dom.traceScenario.value = activeScenario.scenario_id;
-    dom.traceEvent.innerHTML = activeScenario.events
+  function renderTraceSelector() {
+    if (!runtimeProjection?.traces.length) {
+      dom.traceEvent.innerHTML = "<option>No matching runtime traces</option>";
+      dom.traceEvent.disabled = true;
+      return;
+    }
+    dom.traceEvent.innerHTML = runtimeProjection.traces
       .map(
-        (event, index) =>
-          `<option value="${escapeHtml(event.event_id)}">${index + 1}/${activeScenario.events.length} · ${escapeHtml(event.title)} · ${escapeHtml(event.customer_display_name)}</option>`,
+        (trace, index) => `<option value="${escapeHtml(trace.trace_id)}">${index + 1}/${runtimeProjection.traces.length} · #${trace.show_seq} · ${escapeHtml(trace.actual_route)} · ${escapeHtml(trace.customer_display_name)}</option>`,
       )
       .join("");
+    dom.traceEvent.value = activeTrace.trace_id;
     dom.traceEvent.disabled = false;
-    activeEvent = activeScenario.events[0];
-    activeStageNumber = 1;
-    traceHasRun = false;
-    dom.traceStatus.textContent = `Prepared ${activeScenario.events.length} demo message${activeScenario.events.length === 1 ? "" : "s"}.`;
-    renderTrace();
   }
 
-  function runTrace() {
-    if (!activeEvent) return;
-    traceHasRun = true;
-    activeStageNumber = decisiveStage(activeEvent);
-    dom.traceStatus.textContent = activeScenario.mode === "bulk"
-      ? `Ran ${activeScenario.events.length} simulated paths. Select a message to inspect where it stops.`
-      : "Ran one simulated path until the first unavailable or rejected step.";
-    renderTrace();
-    dom.traceDiagnosis.classList.remove("trace-pulse");
-    window.requestAnimationFrame(() => dom.traceDiagnosis.classList.add("trace-pulse"));
-  }
-
-  function decisiveStage(event) {
-    return event?.first_stop?.stage || 7;
+  function decisiveStage(trace) {
+    if (!trace?.stages?.length) return 1;
+    const decisive = trace.stages.find((stage) => !["completed", "skipped"].includes(stage.status));
+    return decisive?.stage_number || trace.stages.at(-1).stage_number;
   }
 
   function renderTrace() {
-    if (!activeEvent || !traceDocument) return;
+    if (!activeTrace) {
+      clearTracePanels();
+      return;
+    }
     renderTraceEvent();
     renderStageRail();
     renderDiagnosis();
@@ -322,40 +210,27 @@
   }
 
   function renderTraceEvent() {
-    const index = activeScenario.events.findIndex((event) => event.event_id === activeEvent.event_id);
-    dom.traceEvent.value = activeEvent.event_id;
-    dom.traceEventIndex.textContent = `${String(index + 1).padStart(2, "0")} / ${String(activeScenario.events.length).padStart(2, "0")}`;
-    dom.traceEventCustomer.textContent = activeEvent.customer_display_name;
-    dom.traceEventTitle.textContent = activeEvent.title;
-    dom.traceEventText.textContent = activeEvent.raw_text;
+    const index = runtimeProjection.traces.findIndex((trace) => trace.trace_id === activeTrace.trace_id);
+    dom.traceEventIndex.textContent = `${String(index + 1).padStart(2, "0")} / ${String(runtimeProjection.traces.length).padStart(2, "0")}`;
+    dom.traceEventCustomer.textContent = activeTrace.customer_display_name;
+    dom.traceEventTitle.textContent = `Question #${activeTrace.show_seq} · ${humanize(activeTrace.state || activeTrace.actual_route)}`;
+    dom.traceEventText.textContent = activeTrace.raw_text;
     dom.traceEventMeta.innerHTML = `
-      <div><dt>Trace</dt><dd><code>${escapeHtml(activeEvent.trace_id)}</code></dd></div>
-      <div><dt>Bound SKU</dt><dd>${escapeHtml(activeEvent.source_context.sku)}</dd></div>
-      <div><dt>Expected</dt><dd>${escapeHtml(activeEvent.expected_result)}</dd></div>
-    `;
+      <div><dt>Trace</dt><dd><code>${escapeHtml(activeTrace.trace_id)}</code></dd></div>
+      <div><dt>Actual route</dt><dd>${escapeHtml(activeTrace.actual_route)}</dd></div>
+      <div><dt>Expected oracle</dt><dd>${escapeHtml(activeTrace.expected_route || "custom / no oracle")}</dd></div>`;
   }
 
   function renderStageRail() {
-    dom.traceStageRail.innerHTML = traceDocument.stage_catalog
-      .map((catalogStage) => {
-        const stage = activeEvent.stages[catalogStage.number - 1];
-        const shownState = traceHasRun ? stage.state : "ready";
-        const selected = activeStageNumber === catalogStage.number;
-        return `
-          <button
-            class="trace-stage is-${escapeHtml(shownState)} ${selected ? "is-selected" : ""}"
-            data-trace-stage="${catalogStage.number}"
-            type="button"
-            aria-pressed="${selected}"
-          >
-            <span class="trace-stage-number">${catalogStage.number}</span>
-            <span class="trace-stage-label">${escapeHtml(catalogStage.short_label)}</span>
-            <span class="trace-stage-state">${escapeHtml(shownState)}</span>
-          </button>
-        `;
-      })
+    dom.traceStageRail.innerHTML = activeTrace.stages
+      .map(
+        (stage) => `<button class="trace-stage is-${escapeHtml(stage.status)} ${activeStageNumber === stage.stage_number ? "is-selected" : ""}" data-trace-stage="${stage.stage_number}" type="button" aria-pressed="${activeStageNumber === stage.stage_number}">
+          <span class="trace-stage-number">${stage.stage_number}</span>
+          <span class="trace-stage-label">${escapeHtml(humanize(stage.stage))}</span>
+          <span class="trace-stage-state">${escapeHtml(stage.status)}</span>
+        </button>`,
+      )
       .join("");
-
     dom.traceStageRail.querySelectorAll("[data-trace-stage]").forEach((button) => {
       button.addEventListener("click", () => {
         activeStageNumber = Number(button.dataset.traceStage);
@@ -366,82 +241,119 @@
   }
 
   function renderDiagnosis() {
-    dom.traceDiagnosis.className = "trace-diagnosis";
-    if (!traceHasRun) {
-      dom.traceDiagnosis.classList.add("is-ready");
-      dom.traceDiagnosisIcon.textContent = "→";
-      dom.traceDiagnosisTitle.textContent = `Prepared · ${activeEvent.title}`;
-      dom.traceDiagnosisMessage.textContent = "Run the demo to reveal simulated, stopped, and skipped stages.";
-      dom.traceTotalDuration.textContent = "—";
-      return;
-    }
-
-    dom.traceTotalDuration.textContent = `${activeEvent.total_duration_ms} ms`;
-    if (!activeEvent.first_stop) {
-      dom.traceDiagnosis.classList.add("is-failed");
-      dom.traceDiagnosisIcon.textContent = "!";
-      dom.traceDiagnosisTitle.textContent = "Trace is incomplete";
-      dom.traceDiagnosisMessage.textContent = "Every current-build trace must identify a stopping stage.";
-      return;
-    }
-
-    const stop = activeEvent.first_stop;
-    dom.traceDiagnosis.classList.add(`is-${stop.state}`);
-    dom.traceDiagnosisIcon.textContent = stop.state === "exited" ? "↗" : "!";
-    dom.traceDiagnosisTitle.textContent = `${stop.state === "exited" ? "Exited" : "Stopped"} at stage ${stop.stage} · ${stop.reason_code}`;
-    dom.traceDiagnosisMessage.textContent = stop.message;
+    const decisive = activeTrace.stages.find((stage) => !["completed", "skipped"].includes(stage.status));
+    dom.traceDiagnosis.className = `trace-diagnosis is-${decisive?.status || (activeTrace.complete ? "passed" : "failed")}`;
+    dom.traceDiagnosisIcon.textContent = decisive ? "!" : activeTrace.complete ? "✓" : "!";
+    dom.traceDiagnosisTitle.textContent = decisive
+      ? `${humanize(decisive.status)} at stage ${decisive.stage_number} · ${humanize(decisive.stage)}`
+      : activeTrace.complete
+        ? "Complete backend trace"
+        : "Incomplete backend trace";
+    dom.traceDiagnosisMessage.textContent = decisive?.reason_code
+      || activeTrace.reason_code
+      || "Every stage has one authoritative terminal observation.";
+    dom.traceTotalDuration.textContent = `${activeTrace.total_duration_ms.toFixed(2)} ms`;
   }
 
   function renderStageInspector() {
-    const stage = activeEvent.stages[activeStageNumber - 1];
-    const catalog = traceDocument.stage_catalog[activeStageNumber - 1];
-    const shownState = traceHasRun ? stage.state : "ready";
-    dom.traceStageKicker.textContent = `Stage ${catalog.number} / 7`;
-    dom.traceStageTitle.textContent = catalog.label;
-    dom.traceStageState.textContent = shownState.toUpperCase();
-    dom.traceStageState.className = `is-${shownState}`;
-    dom.traceStageDuration.textContent = traceHasRun ? `${stage.duration_ms} ms` : "not run";
-    dom.traceStageSummary.textContent = traceHasRun
-      ? stage.summary
-      : "Run the demo to inspect this stage's simulated input and output.";
-    dom.traceStageReason.textContent = traceHasRun ? stage.reason_code || "—" : "—";
-    dom.traceStageInput.textContent = prettyJson(traceHasRun ? stage.input : null);
-    dom.traceStageOutput.textContent = prettyJson(traceHasRun ? stage.output : null);
+    const stage = activeTrace.stages.find((item) => item.stage_number === activeStageNumber);
+    if (!stage) return;
+    dom.traceStageKicker.textContent = `Stage ${stage.stage_number} / ${activeTrace.stages.length}`;
+    dom.traceStageTitle.textContent = humanize(stage.stage);
+    dom.traceStageState.textContent = stage.status.toUpperCase();
+    dom.traceStageState.className = `is-${stage.status}`;
+    dom.traceStageDuration.textContent = `${Number(stage.duration_ms || 0).toFixed(3)} ms`;
+    dom.traceStageSummary.textContent = `${stage.component_id} emitted observation ${stage.observation_id}.`;
+    dom.traceStageReason.textContent = stage.reason_code || "—";
+    dom.traceStageInput.textContent = prettyJson({
+      observation_id: stage.observation_id,
+      started_observation_id: stage.started_observation_id,
+      component_id: stage.component_id,
+      input_ref: stage.input_ref,
+      output_ref: stage.output_ref,
+      verdict: stage.verdict,
+      analysis_call_id: stage.analysis_call_id,
+      snapshot_id: stage.snapshot_id,
+      agent_run_id: stage.agent_run_id,
+      profile_digest: stage.profile_digest,
+    });
+    dom.traceStageOutput.textContent = prettyJson(stage.artifacts);
   }
 
   function renderDestinations() {
-    dom.traceDestinationGrid.innerHTML = activeEvent.destinations
+    const destinations = [
+      {label: "Lifecycle", status: activeTrace.state || "none", payload: activeTrace.transitions},
+      {label: "Review suggestion", status: activeTrace.suggestion ? "recorded" : "none", payload: activeTrace.suggestion},
+      {label: "Outbound reply", status: activeTrace.outbound_reply ? "sent" : "none", payload: activeTrace.outbound_reply},
+      {label: "Reply receipt", status: activeTrace.reply_receipt ? "recorded" : "none", payload: activeTrace.reply_receipt},
+    ];
+    dom.traceDestinationGrid.innerHTML = destinations
       .map(
-        (destination) => `
-          <article class="trace-destination" data-destination="${escapeHtml(destination.key)}">
-            <header>
-              <span>${escapeHtml(destination.label)}</span>
-              <strong class="destination-status destination-status--${escapeHtml(destination.status.toLowerCase())}">${escapeHtml(destination.status)}</strong>
-            </header>
-            <p>${escapeHtml(destination.summary)}</p>
-            <details>
-              <summary>Inspect destination payload</summary>
-              <pre>${escapeHtml(prettyJson(destination.payload))}</pre>
-            </details>
-          </article>
-        `,
+        (item) => `<article class="trace-destination"><header><span>${escapeHtml(item.label)}</span><strong class="destination-status">${escapeHtml(item.status)}</strong></header><p>Backend-owned runtime projection.</p><details><summary>Inspect persisted payload</summary><pre>${escapeHtml(prettyJson(item.payload))}</pre></details></article>`,
       )
       .join("");
   }
 
-  function renderTraceError(error) {
-    dom.traceStatus.textContent = "Demo messages unavailable. Marketplace activity remains usable.";
-    dom.traceScenario.innerHTML = '<option>Demo messages unavailable</option>';
-    dom.traceEvent.innerHTML = '<option>No trace events</option>';
-    dom.traceDiagnosis.className = "trace-diagnosis is-failed";
-    dom.traceDiagnosisIcon.textContent = "!";
-    dom.traceDiagnosisTitle.textContent = "Message trace could not load";
-    dom.traceDiagnosisMessage.textContent = error?.message || "Unknown fixture error";
-    dom.traceTotalDuration.textContent = "—";
+  function renderTraceEmpty(message) {
+    runtimeProjection = null;
+    activeTrace = null;
+    dom.traceStatus.textContent = message;
+    dom.traceEvent.innerHTML = "<option>No runtime traces</option>";
+    dom.traceEvent.disabled = true;
+    clearTracePanels();
   }
 
-  function sessionToken() {
-    return sessionStorage.getItem(SESSION_KEY);
+  function clearTracePanels() {
+    dom.traceEventIndex.textContent = "—";
+    dom.traceEventCustomer.textContent = "Runtime";
+    dom.traceEventTitle.textContent = "No trace selected";
+    dom.traceEventText.textContent = "Accept a chat message from the seller workspace to create a trace.";
+    dom.traceStageRail.replaceChildren();
+    dom.traceDiagnosisTitle.textContent = "No persisted trace";
+    dom.traceDiagnosisMessage.textContent = "The frontend does not synthesize missing stage results.";
+    dom.traceTotalDuration.textContent = "—";
+    dom.traceStageTitle.textContent = "Stage detail";
+    dom.traceStageInput.textContent = "null";
+    dom.traceStageOutput.textContent = "null";
+    dom.traceDestinationGrid.replaceChildren();
+  }
+
+  function initializeImportTrace() {
+    renderImportStages(IMPORT_STAGE_CATALOG.map((stage) => ({...stage, state: "ready", duration_ms: 0})));
+  }
+
+  async function runImportTrace() {
+    dom.importRun.disabled = true;
+    try {
+      const trace = await fetchJson(IMPORT_TRACE_URL);
+      if (trace?.schema_version !== "sidestage.import_trace.v1" || !Array.isArray(trace.stages)) {
+        throw new Error("Import trace identity is invalid.");
+      }
+      dom.importRuntime.className = `import-runtime-badge ${trace.status === "accepted" ? "is-runtime" : "is-rejected"}`;
+      dom.importRuntime.textContent = "LIVE BACKEND CHECK";
+      dom.importStatus.textContent = trace.status === "accepted" ? "Backend catalog check completed." : "Catalog import rejected.";
+      renderImportStages(trace.stages);
+      const counts = trace.outcome?.counts;
+      dom.importDiagnosis.className = `import-trace-diagnosis ${trace.status === "accepted" ? "is-accepted" : "is-rejected"}`;
+      dom.importDiagnosis.querySelector(".import-trace-mark").textContent = trace.status === "accepted" ? "✓" : "!";
+      dom.importDiagnosis.querySelector("div > span").textContent = "Import outcome";
+      dom.importDiagnosis.querySelector("strong").textContent = trace.status === "accepted" ? "Typed fixture accepted" : "Fixture rejected";
+      dom.importCounts.textContent = counts ? `${counts.sellers} sellers · ${counts.listings} listings · ${counts.variants} variants` : "No catalog emitted";
+      dom.importTraceId.textContent = trace.trace_id;
+      dom.importSource.textContent = trace.source?.filename || "—";
+      dom.importDigest.textContent = trace.source?.sha256 ? `${trace.source.sha256.slice(0, 12)}…` : "—";
+      dom.importPayload.textContent = prettyJson(trace);
+    } catch (error) {
+      dom.importRuntime.className = "import-runtime-badge is-offline";
+      dom.importRuntime.textContent = "BACKEND UNAVAILABLE";
+      dom.importStatus.textContent = error.message;
+    } finally {
+      dom.importRun.disabled = false;
+    }
+  }
+
+  function renderImportStages(stages) {
+    dom.importStageRail.innerHTML = stages.map((stage) => `<article class="import-stage is-${escapeHtml(stage.state)}"><span class="import-stage-number">${stage.number}</span><span class="import-stage-copy"><strong>${escapeHtml(stage.label)}</strong><small>${escapeHtml(stage.state)}${stage.state === "ready" ? "" : ` · ${escapeHtml(stage.duration_ms)} ms`}</small></span></article>`).join("");
   }
 
   async function renderMarketplace() {
@@ -450,15 +362,8 @@
       renderMarketplaceEmpty("Open the seller workspace first to start a server-owned demo session.");
       return;
     }
-
     try {
-      const response = await fetchJson(
-        `/api/debug/marketplace?session_token=${encodeURIComponent(token)}`,
-        {cache: "no-store"},
-      );
-      if (response.runtime_source !== "m2_3_sqlite") {
-        throw new Error("Unexpected marketplace ledger source.");
-      }
+      const response = await fetchJson(`/api/debug/marketplace?session_token=${encodeURIComponent(token)}`);
       const state = response.snapshot;
       const active = listingForId(state, state.show.active_listing_id);
       dom.ledgerEmpty.hidden = true;
@@ -478,11 +383,9 @@
     marketplaceEventSource?.close();
     const token = sessionToken();
     if (!token) return;
-    marketplaceEventSource = new EventSource(
-      `/api/sessions/${encodeURIComponent(token)}/events`,
-    );
-    ["chat.accepted", "marketplace.changed"].forEach((type) => {
-      marketplaceEventSource.addEventListener(type, () => renderMarketplace());
+    marketplaceEventSource = new EventSource(`/api/sessions/${encodeURIComponent(token)}/events`);
+    ["chat.accepted", "chat.reply", "marketplace.changed", "copilot.question.changed", "copilot.r3.changed"].forEach((type) => {
+      marketplaceEventSource.addEventListener(type, () => Promise.all([renderRuntimeTraces(), renderMarketplace()]));
     });
   }
 
@@ -510,126 +413,32 @@
   }
 
   function renderEvents(state) {
-    if (state.chat_events.length === 0) {
-      dom.eventLedger.innerHTML = '<p class="ledger-empty">No raw chat events have been accepted.</p>';
-      return;
-    }
-
-    dom.eventLedger.innerHTML = [...state.chat_events]
-      .sort((a, b) => a.show_seq - b.show_seq)
-      .map(
-        (event) => `
-          <article class="event-row">
-            <code>#${String(event.show_seq).padStart(3, "0")}</code>
-            <div><strong>${escapeHtml(event.customer_display_name)}</strong><span class="ledger-badge">${escapeHtml(event.input_origin)}</span></div>
-            <p class="event-raw">${escapeHtml(event.raw_text)}</p>
-            <div><code>${escapeHtml(event.source_epoch_id ? shortEpoch(event.source_epoch_id) : "No cue")}</code><span class="ledger-badge">${escapeHtml(event.source_listing_id || "slot empty")}</span></div>
-            <code>${escapeHtml(formatClock(event.accepted_at))}</code>
-          </article>
-        `,
-      )
-      .join("");
+    dom.eventLedger.innerHTML = state.chat_events.length
+      ? [...state.chat_events].sort((a, b) => a.show_seq - b.show_seq).map((event) => `<article class="event-row"><code>#${String(event.show_seq).padStart(3, "0")}</code><div><strong>${escapeHtml(event.customer_display_name)}</strong><span class="ledger-badge">${escapeHtml(event.input_origin)}</span></div><p class="event-raw">${escapeHtml(event.raw_text)}</p><div><code>${escapeHtml(event.source_epoch_id ? shortEpoch(event.source_epoch_id) : "No cue")}</code><span class="ledger-badge">${escapeHtml(event.source_listing_id || "slot empty")}</span></div><code>${escapeHtml(formatClock(event.accepted_at))}</code></article>`).join("")
+      : '<p class="ledger-empty">No raw chat events have been accepted.</p>';
   }
 
   function renderEpochs(state) {
-    if (state.epochs.length === 0) {
-      dom.epochLedger.innerHTML = '<p class="ledger-empty">No listing epoch has opened. Push a listing from the seller workspace.</p>';
-      return;
-    }
-
-    dom.epochLedger.innerHTML = state.epochs
-      .map((epoch, index) => {
-        const listing = listingForId(state, epoch.listing_id);
-        return `
-          <article class="epoch-row ${epoch.end_seq === null ? "is-open" : ""}">
-            <div class="epoch-cell"><span>Epoch</span><strong>${escapeHtml(`E${String(index + 1).padStart(2, "0")}`)}</strong></div>
-            <div class="epoch-cell"><span>Listing</span><strong>${escapeHtml(listing?.title || epoch.listing_id)}</strong><code>${escapeHtml(listing?.sku || epoch.listing_id)}</code></div>
-            <div class="epoch-cell"><span>Sequence boundary</span><strong>${epoch.start_seq} → ${epoch.end_seq ?? "open"}</strong><code>${escapeHtml(epoch.epoch_id)}</code></div>
-            <div class="epoch-cell"><span>State</span><strong>${epoch.end_seq === null ? "Active" : "Closed"}</strong><code>ordered by show_seq</code></div>
-          </article>
-        `;
-      })
-      .join("");
+    dom.epochLedger.innerHTML = state.epochs.length
+      ? state.epochs.map((epoch, index) => { const listing = listingForId(state, epoch.listing_id); return `<article class="epoch-row ${epoch.end_seq === null ? "is-open" : ""}"><div class="epoch-cell"><span>Epoch</span><strong>E${String(index + 1).padStart(2, "0")}</strong></div><div class="epoch-cell"><span>Listing</span><strong>${escapeHtml(listing?.title || epoch.listing_id)}</strong><code>${escapeHtml(listing?.sku || epoch.listing_id)}</code></div><div class="epoch-cell"><span>Sequence boundary</span><strong>${epoch.start_seq} → ${epoch.end_seq ?? "open"}</strong><code>${escapeHtml(epoch.epoch_id)}</code></div><div class="epoch-cell"><span>State</span><strong>${epoch.end_seq === null ? "Active" : "Closed"}</strong></div></article>`; }).join("")
+      : '<p class="ledger-empty">No listing epoch has opened.</p>';
   }
 
   function renderReceipts(state) {
-    if (state.receipts.length === 0) {
-      dom.receiptLedger.innerHTML = '<p class="ledger-empty">No marketplace operation has been attempted.</p>';
-      return;
-    }
-
-    dom.receiptLedger.innerHTML = [...state.receipts]
-      .reverse()
-      .map((receipt, index) => {
-        const isRejected = receipt.status === "rejected";
-        const compensation = state.receipts.find(
-          (candidate) => candidate.compensation_for_receipt_id === receipt.receipt_id,
-        );
-        const relationship = receipt.compensation_for_receipt_id
-          ? `Compensates ${receipt.compensation_for_receipt_id}`
-          : compensation
-            ? `Compensated by ${compensation.receipt_id}`
-            : "Original operation";
-        const listing = listingForId(state, receipt.listing_id);
-        const subject = listing
-          ? `${listing.title} · ${listing.sku}`
-          : receipt.variant_id || receipt.listing_id || state.show.show_id;
-        return `
-          <article class="receipt-row">
-            <code>#${String(state.receipts.length - index).padStart(3, "0")}</code>
-            <div class="receipt-cell"><span>Operation</span><strong>${escapeHtml(formatOperation(receipt.operation_type))}</strong><span class="receipt-status ${isRejected ? "receipt-status--rejected" : ""}">${escapeHtml(receipt.status)}</span></div>
-            <div class="receipt-cell"><span>Subject</span><strong>${escapeHtml(subject)}</strong><code>${escapeHtml(receipt.receipt_id)}</code></div>
-            <div class="receipt-cell"><span>Relationship</span><strong>${escapeHtml(relationship)}</strong><code>${escapeHtml(receipt.error_code || "no error")}</code></div>
-            <div class="receipt-cell"><span>Recorded</span><strong>${escapeHtml(formatClock(receipt.recorded_at))}</strong><code>show v${receipt.resulting_versions?.show_version ?? "—"}</code></div>
-            <details class="receipt-details"><summary>Inspect state projection</summary><pre>${escapeHtml(prettyJson({request: receipt.request, expected_versions: receipt.expected_versions, resulting_versions: receipt.resulting_versions, before: receipt.before, after: receipt.after}))}</pre></details>
-          </article>
-        `;
-      })
-      .join("");
+    dom.receiptLedger.innerHTML = state.receipts.length
+      ? [...state.receipts].reverse().map((receipt, index) => `<article class="receipt-row"><code>#${String(state.receipts.length - index).padStart(3, "0")}</code><div class="receipt-cell"><span>Operation</span><strong>${escapeHtml(humanize(receipt.operation_type))}</strong><span class="receipt-status">${escapeHtml(receipt.status)}</span></div><div class="receipt-cell"><span>Subject</span><strong>${escapeHtml(receipt.listing_id || receipt.show_id)}</strong><code>${escapeHtml(receipt.receipt_id)}</code></div><div class="receipt-cell"><span>Recorded</span><strong>${escapeHtml(formatClock(receipt.recorded_at))}</strong></div><details class="receipt-details"><summary>Inspect state projection</summary><pre>${escapeHtml(prettyJson(receipt))}</pre></details></article>`).join("")
+      : '<p class="ledger-empty">No marketplace operation has been attempted.</p>';
   }
 
   function activateTab(name) {
-    document.querySelectorAll("[data-ledger-tab]").forEach((tab) => {
-      const active = tab.dataset.ledgerTab === name;
-      tab.classList.toggle("is-active", active);
-      tab.setAttribute("aria-selected", String(active));
-    });
-    document.querySelectorAll("[data-ledger-panel]").forEach((panel) => {
-      const active = panel.dataset.ledgerPanel === name;
-      panel.hidden = !active;
-      panel.classList.toggle("is-active", active);
-    });
+    document.querySelectorAll("[data-ledger-tab]").forEach((tab) => tab.classList.toggle("is-active", tab.dataset.ledgerTab === name));
+    document.querySelectorAll("[data-ledger-panel]").forEach((panel) => { panel.hidden = panel.dataset.ledgerPanel !== name; });
   }
 
-  function listingForId(state, listingId) {
-    return state?.listings?.find((listing) => listing.listing_id === listingId) || null;
-  }
-
-  function formatOperation(value) {
-    return value
-      .split("_")
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(" ");
-  }
-
-  function shortEpoch(epochId) {
-    return `E${epochId.split("_").at(-1)}`;
-  }
-
-  function formatClock(isoString) {
-    return new Intl.DateTimeFormat("en-US", {hour: "numeric", minute: "2-digit", second: "2-digit"}).format(new Date(isoString));
-  }
-
-  function prettyJson(value) {
-    return JSON.stringify(value, null, 2);
-  }
-
-  function escapeHtml(value) {
-    return String(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
+  function listingForId(state, listingId) { return state?.listings?.find((item) => item.listing_id === listingId) || null; }
+  function shortEpoch(epochId) { return `E${epochId.split("_").at(-1)}`; }
+  function formatClock(value) { return new Intl.DateTimeFormat("en-US", {hour: "numeric", minute: "2-digit", second: "2-digit"}).format(new Date(value)); }
+  function humanize(value) { return String(value || "none").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
+  function prettyJson(value) { return JSON.stringify(value, null, 2); }
+  function escapeHtml(value) { return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
 })();

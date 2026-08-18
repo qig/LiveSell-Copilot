@@ -60,6 +60,7 @@ class EventIngestor:
         customer_display_name: str,
         raw_text: str,
         input_origin: Literal["prepared", "custom"],
+        trace_id: Optional[str] = None,
     ) -> AcceptedChatEvent:
         event_values = {
             "event_id": f"evt_{uuid4().hex}",
@@ -69,7 +70,7 @@ class EventIngestor:
             "raw_text": raw_text,
             "input_origin": input_origin,
             "accepted_at": _utc_millis(self.wall_clock()),
-            "trace_id": f"trc_{uuid4().hex}",
+            "trace_id": trace_id or f"trc_{uuid4().hex}",
         }
         with self.database.transaction() as connection:
             show = connection.execute(

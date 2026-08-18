@@ -78,6 +78,7 @@
       "fixture_class": "answerable_policy",
       "seller_scope": "all",
       "weight": 10,
+      "pressure_answerable": true,
       "messages": [
         "how long does shipping take?",
         "can I return these if they don't fit?",
@@ -90,10 +91,11 @@
       "fixture_class": "mixed_greeting_question",
       "seller_scope": "all",
       "weight": 6,
+      "pressure_answerable": true,
       "messages": [
         "hey 🔥 how much is the current pair?",
         "hi, how long does shipping take?",
-        "good morning—what sizes are left?",
+        "good morning—is size 9 left?",
         "yo 👟 can I return these if they don't fit?"
       ]
     },
@@ -141,7 +143,7 @@
       "pool_id": "pool_velocity_listing_questions",
       "fixture_class": "answerable_listing",
       "seller_scope": "sel_velocity_kicks",
-      "weight": 24,
+      "weight": 14,
       "messages": [
         "how much is the Aero Dash?",
         "do you have the Aero Dash in a men's 9?",
@@ -155,7 +157,7 @@
       "pool_id": "pool_velocity_research_questions",
       "fixture_class": "answerable_research",
       "seller_scope": "sel_velocity_kicks",
-      "weight": 12,
+      "weight": 6,
       "messages": [
         "what materials are on the Terra Shift?",
         "how does the Court Pulse fit?",
@@ -166,14 +168,36 @@
       ]
     },
     {
+      "pool_id": "pool_velocity_pressure_current",
+      "fixture_class": "answerable_listing",
+      "seller_scope": "sel_velocity_kicks",
+      "weight": 16,
+      "pressure_answerable": true,
+      "messages": [
+        "what is the current price on the Aero Dash right now?",
+        "is the Aero Dash available in size 8?",
+        "is size 10 in stock for the Aero Dash?",
+        "what is the shipping policy for the Aero Dash?",
+        "can I return the Aero Dash if it does not fit?",
+        "when is payment captured for the Aero Dash?",
+        "what is the release date of the Aero Dash?",
+        "what was the original MSRP of the Aero Dash?",
+        "what materials is the Aero Dash made from?",
+        "how does the Aero Dash fit?",
+        "has the Aero Dash been authenticated?",
+        "what condition is the Aero Dash in?"
+      ]
+    },
+    {
       "pool_id": "pool_velocity_exact_duplicates",
       "fixture_class": "answerable_listing",
       "seller_scope": "sel_velocity_kicks",
       "weight": 3,
+      "pressure_answerable": true,
       "emission_mode": "adjacent_duplicate_pair",
       "messages": [
         "do you have the Aero Dash in size 9?",
-        "how much is the Court Pulse?"
+        "how much is the Aero Dash today?"
       ]
     },
     {
@@ -181,15 +205,16 @@
       "fixture_class": "answerable_listing",
       "seller_scope": "sel_velocity_kicks",
       "weight": 3,
+      "pressure_answerable": true,
       "emission_mode": "adjacent_normalized_pair",
       "message_pairs": [
         [
-          "Do you have the Terra Shift in size 8? 👟",
-          "do you have the terra shift in size 8"
+          "When did the Aero Dash release? 👟",
+          "when did the aero dash release"
         ],
         [
-          "Is the Court Pulse available in size 9?!",
-          "is the court pulse available in size 9"
+          "Is the Aero Dash available in size 9?!",
+          "is the aero dash available in size 9"
         ]
       ]
     },
@@ -210,7 +235,7 @@
       "pool_id": "pool_vault_listing_questions",
       "fixture_class": "answerable_listing",
       "seller_scope": "sel_vault_consign",
-      "weight": 24,
+      "weight": 14,
       "messages": [
         "how much is the Heritage High 88?",
         "what size is the Studio Low 94?",
@@ -224,7 +249,7 @@
       "pool_id": "pool_vault_research_questions",
       "fixture_class": "answerable_research",
       "seller_scope": "sel_vault_consign",
-      "weight": 12,
+      "weight": 6,
       "messages": [
         "when did the Heritage High 88 release?",
         "what materials are on the Studio Low 94?",
@@ -235,14 +260,36 @@
       ]
     },
     {
+      "pool_id": "pool_vault_pressure_current",
+      "fixture_class": "answerable_listing",
+      "seller_scope": "sel_vault_consign",
+      "weight": 16,
+      "pressure_answerable": true,
+      "messages": [
+        "what is the current price on the Heritage High 88 right now?",
+        "do you have the Heritage High 88 in size 9 right now?",
+        "is there one Heritage High 88 available in size 9?",
+        "what is the shipping policy for the Heritage High 88?",
+        "can I return the Heritage High 88 if it does not fit?",
+        "when is payment captured for the Heritage High 88?",
+        "what is the release date of the Heritage High 88?",
+        "what was the original MSRP of the Heritage High 88?",
+        "what materials is the Heritage High 88 made from?",
+        "how does the Heritage High 88 fit?",
+        "has the Heritage High 88 been authenticated?",
+        "what condition is the Heritage High 88 in?"
+      ]
+    },
+    {
       "pool_id": "pool_vault_exact_duplicates",
       "fixture_class": "answerable_listing",
       "seller_scope": "sel_vault_consign",
       "weight": 3,
+      "pressure_answerable": true,
       "emission_mode": "adjacent_duplicate_pair",
       "messages": [
-        "what condition is the Heritage High 88 in?",
-        "does the Vector Court Sample include the box?"
+        "can you confirm the condition of the Heritage High 88?",
+        "how much is the Heritage High 88 today?"
       ]
     },
     {
@@ -250,15 +297,16 @@
       "fixture_class": "answerable_listing",
       "seller_scope": "sel_vault_consign",
       "weight": 3,
+      "pressure_answerable": true,
       "emission_mode": "adjacent_normalized_pair",
       "message_pairs": [
         [
-          "Does the Studio Low come in 10.5?!",
-          "does the studio low come in 10.5"
+          "When did the Heritage High 88 release? 👟",
+          "when did the heritage high 88 release"
         ],
         [
-          "What is the Vector Court condition?",
-          "what is the vector court condition"
+          "Is the Heritage High 88 available in size 9?!",
+          "is the heritage high 88 available in size 9"
         ]
       ]
     },
@@ -279,7 +327,7 @@
       "pool_id": "pool_rotation_listing_questions",
       "fixture_class": "answerable_listing",
       "seller_scope": "sel_rotation_kicks",
-      "weight": 24,
+      "weight": 14,
       "messages": [
         "how much is the Flash Arc?",
         "do you have the Relay Low in size 10?",
@@ -293,7 +341,7 @@
       "pool_id": "pool_rotation_research_questions",
       "fixture_class": "answerable_research",
       "seller_scope": "sel_rotation_kicks",
-      "weight": 12,
+      "weight": 6,
       "messages": [
         "what materials are on the Tempo Grid?",
         "how does the Relay Low fit?",
@@ -304,14 +352,36 @@
       ]
     },
     {
+      "pool_id": "pool_rotation_pressure_current",
+      "fixture_class": "answerable_listing",
+      "seller_scope": "sel_rotation_kicks",
+      "weight": 16,
+      "pressure_answerable": true,
+      "messages": [
+        "what is the current price on the Flash Arc right now?",
+        "do you have the Flash Arc in size 9 right now?",
+        "is there one Flash Arc available in size 9?",
+        "what is the shipping policy for the Flash Arc?",
+        "can I return the Flash Arc if it does not fit?",
+        "when is payment captured for the Flash Arc?",
+        "what is the release date of the Flash Arc?",
+        "what was the original MSRP of the Flash Arc?",
+        "what materials is the Flash Arc made from?",
+        "how does the Flash Arc fit?",
+        "has the Flash Arc been authenticated?",
+        "what condition is the Flash Arc in?"
+      ]
+    },
+    {
       "pool_id": "pool_rotation_exact_duplicates",
       "fixture_class": "answerable_listing",
       "seller_scope": "sel_rotation_kicks",
       "weight": 3,
+      "pressure_answerable": true,
       "emission_mode": "adjacent_duplicate_pair",
       "messages": [
-        "do you have one Flash Arc left?",
-        "what is the listing price for the Relay Low?"
+        "do you have the Flash Arc in size 9 today?",
+        "how much is the Flash Arc today?"
       ]
     },
     {
@@ -319,6 +389,7 @@
       "fixture_class": "answerable_listing",
       "seller_scope": "sel_rotation_kicks",
       "weight": 3,
+      "pressure_answerable": true,
       "emission_mode": "adjacent_normalized_pair",
       "message_pairs": [
         [
@@ -326,8 +397,8 @@
           "is flash arc available in size 9"
         ],
         [
-          "What is the Tempo Grid price?",
-          "what is the tempo grid price"
+          "When did the Flash Arc release? 👟",
+          "when did the flash arc release"
         ]
       ]
     },

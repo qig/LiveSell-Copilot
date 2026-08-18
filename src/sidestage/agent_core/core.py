@@ -428,6 +428,7 @@ class StaticAgentCore:
             model_id=response.model_id,
             status=RunStatus.SUCCEEDED,
             terminal_intent=intent,
+            provider_metadata=response.provider_metadata,
             latency=self._latency(
                 accepted_at=accepted_at,
                 queue_ms=queue_ms,

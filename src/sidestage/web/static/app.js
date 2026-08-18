@@ -54,6 +54,10 @@
       showId: document.querySelector("#show-id"),
       streamChip: document.querySelector("#stream-chip"),
       streamStatus: document.querySelector("#stream-status"),
+      r3Toggle: document.querySelector("#r3-toggle"),
+      r3ToggleLabel: document.querySelector("#r3-toggle-label"),
+      r3Warning: document.querySelector("#r3-warning"),
+      r3Disable: document.querySelector("#r3-disable"),
       activeSku: document.querySelector("#active-sku"),
       eventCount: document.querySelector("#event-count"),
       toggleStream: document.querySelector("#toggle-stream"),
@@ -63,6 +67,8 @@
       chatForm: document.querySelector("#chat-form"),
       chatInput: document.querySelector("#chat-input"),
       activeCue: document.querySelector("#active-cue"),
+      copilotList: document.querySelector("#copilot-list"),
+      copilotCount: document.querySelector("#copilot-count"),
       operationDock: document.querySelector("#operation-dock"),
       catalogRail: document.querySelector("#catalog-rail"),
       catalogNote: document.querySelector("#catalog-note"),
@@ -93,6 +99,8 @@
       if (streamTimer) stopFixture();
       else startFixture();
     });
+    dom.r3Toggle.addEventListener("click", toggleR3);
+    dom.r3Disable.addEventListener("click", () => toggleR3({forceDisabled: true}));
     dom.stepStream.addEventListener("click", () => appendPrepared(1));
     dom.burstStream.addEventListener("click", () => appendPrepared(8));
     dom.chatForm.addEventListener("submit", submitCustomChat);
@@ -100,6 +108,7 @@
       const button = event.target.closest("[data-operation]");
       if (button && !button.disabled) openOperationDialog(button.dataset.operation);
     });
+    dom.copilotList.addEventListener("click", submitCopilotDecision);
     dom.operationForm.addEventListener("submit", submitOperation);
     dom.undoButton.addEventListener("click", performUndo);
     dom.noticeClose.addEventListener("click", hideNotice);
@@ -196,7 +205,7 @@
       dom.streamChip.classList.remove("is-running");
       dom.streamStatus.textContent = "Reconnecting";
     };
-    ["chat.accepted", "marketplace.changed"].forEach((type) => {
+    ["chat.accepted", "chat.reply", "marketplace.changed", "copilot.question.changed", "copilot.r3.changed"].forEach((type) => {
       eventSource.addEventListener(type, () => scheduleSnapshotRefresh());
     });
   }
@@ -214,6 +223,7 @@
     const token = sessionToken;
     const next = await api(`/api/sessions/${encodeURIComponent(token)}/snapshot`);
     if (token !== sessionToken) return;
+    if (snapshot && next.stream_offset < snapshot.stream_offset) return;
     snapshot = next;
     renderAll();
   }
@@ -223,7 +233,9 @@
     dom.showId.textContent = snapshot.show.show_id;
     dom.eventCount.textContent = String(snapshot.chat_events.length).padStart(2, "0");
     dom.activeSku.textContent = activeListing()?.sku || "Stage clear";
+    renderR3Capability();
     renderActiveCue();
+    renderCopilotInbox();
     renderOperationDock();
     renderCatalog();
     renderUndo();
@@ -409,6 +421,159 @@
         dom.chatFeed.scrollTop = dom.chatFeed.scrollHeight;
       });
     }
+  }
+
+  function renderCopilotInbox() {
+    const questions = snapshot.copilot_questions || [];
+    const openCount = questions.filter((question) =>
+      ["queued", "ai_working", "awaiting_review", "needs_seller"].includes(question.state),
+    ).length;
+    dom.copilotCount.textContent = `${openCount} open · ${questions.length} total`;
+    dom.copilotList.replaceChildren();
+    if (!questions.length) {
+      dom.copilotList.innerHTML = `<div class="copilot-empty"><strong>No questions yet.</strong><p>Buyer questions will appear here after they pass deterministic routing.</p></div>`;
+      return;
+    }
+
+    questions.forEach((question) => {
+      const suggestion = question.suggestion?.reply_text || "";
+      const editable = question.state === "awaiting_review" || question.state === "needs_seller";
+      const listing = listingById(question.bound_listing_id);
+      const stock = listing ? totalStock(listing) : null;
+      const stateLabel = questionStateLabel(question.state);
+      const card = document.createElement("article");
+      card.className = `copilot-card copilot-card--${escapeHtml(question.state)}`;
+      card.dataset.questionId = question.question_id;
+      const temporalBadge = question.previous_sku
+        ? `<span class="copilot-badge copilot-badge--previous">Previous SKU · ${escapeHtml(question.previous_sku)}</span>`
+        : listing
+          ? `<span class="copilot-badge">${escapeHtml(listing.sku)}</span>`
+          : "";
+      const facts = listing
+        ? `<div class="copilot-facts"><span>${formatMoney(listing.price_cents)}</span><span>${stock} in stock</span></div>`
+        : "";
+      const responseControl = editable
+        ? `<label class="copilot-reply-field"><span>${suggestion ? "AI draft — editable" : "Your reply"}</span><textarea data-copilot-reply maxlength="500" placeholder="Write a seller reply…">${escapeHtml(suggestion)}</textarea></label>`
+        : ["answered_by_seller", "auto_answered"].includes(question.state)
+          ? `<p class="copilot-resolution">Reply sent and receipt recorded.</p>`
+          : `<p class="copilot-resolution">${escapeHtml(question.reason_code || stateLabel)}</p>`;
+      const actions = question.state === "awaiting_review"
+        ? `<div class="copilot-actions"><button class="button button--signal" type="button" data-copilot-action="accept">Accept AI</button><button class="button button--paper" type="button" data-copilot-action="reply">Send edit</button><button class="text-button" type="button" data-copilot-action="dismiss">Dismiss</button></div>`
+        : question.state === "needs_seller"
+          ? `<div class="copilot-actions"><button class="button button--signal" type="button" data-copilot-action="reply">Send reply</button><button class="text-button" type="button" data-copilot-action="dismiss">Dismiss</button></div>`
+          : "";
+      card.innerHTML = `
+        <header class="copilot-card-header">
+          <div><strong>${escapeHtml(question.customer_display_name)}</strong><time datetime="${escapeHtml(question.asked_at)}">${escapeHtml(formatClock(question.asked_at))}</time></div>
+          <span class="copilot-state">${escapeHtml(stateLabel)}</span>
+        </header>
+        <p class="copilot-question">${escapeHtml(question.raw_text)}</p>
+        <div class="copilot-context">${temporalBadge}${facts}</div>
+        ${responseControl}
+        ${actions}`;
+      dom.copilotList.append(card);
+    });
+  }
+
+  function renderR3Capability() {
+    const capability = snapshot.r3_capability;
+    const enabled = Boolean(capability?.enabled);
+    dom.r3ToggleLabel.textContent = enabled ? "Auto-reply on" : "Review first";
+    dom.r3Toggle.querySelector(".status-suffix").textContent = enabled ? "R3" : "R2";
+    dom.r3Toggle.classList.toggle("is-enabled", enabled);
+    dom.r3Toggle.setAttribute("aria-pressed", String(enabled));
+    dom.r3Toggle.title = enabled ? "Disable bounded auto-reply" : "Enable bounded auto-reply";
+    dom.r3Warning.hidden = !enabled;
+  }
+
+  async function toggleR3(options = {}) {
+    if (!snapshot?.r3_capability || !sessionToken) return;
+    const forceDisabled = options?.forceDisabled === true;
+    const enabled = forceDisabled ? false : !snapshot.r3_capability.enabled;
+    dom.r3Toggle.disabled = true;
+    dom.r3Disable.disabled = true;
+    try {
+      const response = await api(
+        `/api/sessions/${encodeURIComponent(sessionToken)}/copilot/r3`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            enabled,
+            expected_version: snapshot.r3_capability.version,
+          }),
+        },
+      );
+      snapshot = response.snapshot;
+      renderAll();
+      showNotice(
+        enabled ? "Bounded auto-reply enabled" : "Auto-reply disabled",
+        enabled
+          ? "Only the five version-checked R3 fact categories may send without review."
+          : "All new replies now require seller review.",
+      );
+    } catch (error) {
+      showNotice("Automation setting unchanged", error.message, {error: true});
+      await refreshSnapshot().catch(() => renderR3Capability());
+    } finally {
+      dom.r3Toggle.disabled = false;
+      dom.r3Disable.disabled = false;
+    }
+  }
+
+  async function submitCopilotDecision(event) {
+    const button = event.target.closest("[data-copilot-action]");
+    if (!button || button.disabled || !sessionToken) return;
+    const card = button.closest(".copilot-card");
+    const questionId = card.dataset.questionId;
+    const action = button.dataset.copilotAction;
+    const request = {action};
+    if (action === "reply") {
+      const textarea = card.querySelector("[data-copilot-reply]");
+      if (!textarea || textarea.value.length === 0) {
+        textarea?.focus();
+        showNotice("Reply required", "Write the exact seller reply before sending.", {error: true});
+        return;
+      }
+      request.reply_text = textarea.value;
+    }
+    card.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+    try {
+      const response = await api(
+        `/api/sessions/${encodeURIComponent(sessionToken)}/copilot/questions/${encodeURIComponent(questionId)}/decision`,
+        {
+          method: "POST",
+          headers: {"Idempotency-Key": nextIdempotencyKey(`copilot-${action}`)},
+          body: JSON.stringify(request),
+        },
+      );
+      snapshot = response.snapshot;
+      renderAll();
+      if (response.status === "stale") {
+        showNotice("Draft needs another review", "The listing facts changed, so nothing was sent.", {error: true});
+      } else if (response.status === "dismissed") {
+        showNotice("Question dismissed", "No reply was sent.");
+      } else if (response.warnings?.length) {
+        showNotice("Seller reply sent", `Sent exactly as written with warnings: ${response.warnings.join(", ")}.`);
+      } else {
+        showNotice("Reply sent", "The outbound reply and audit receipt were recorded atomically.");
+      }
+    } catch (error) {
+      showNotice("Reply not sent", error.message, {error: true});
+      await refreshSnapshot().catch(() => renderCopilotInbox());
+    }
+  }
+
+  function questionStateLabel(state) {
+    return {
+      queued: "Queued",
+      ai_working: "Drafting",
+      awaiting_review: "Ready for review",
+      auto_answered: "Auto answered",
+      needs_seller: "Needs you",
+      answered_by_seller: "Answered",
+      unanswered: "Dismissed",
+      grouped: "Grouped",
+    }[state] || state.replaceAll("_", " ");
   }
 
   async function submitCustomChat(event) {

@@ -31,6 +31,7 @@ from sidestage.agent_core.model import (
     ModelTerminalCall,
     OpenAICompatibleModelConfig,
     OpenAICompatibleModelRunner,
+    OpenRouterRoutingConfig,
     ScriptedModelRunner,
 )
 from sidestage.agent_core.terminal import (
@@ -68,6 +69,7 @@ __all__ = [
     "NullTraceSink",
     "OpenAICompatibleModelConfig",
     "OpenAICompatibleModelRunner",
+    "OpenRouterRoutingConfig",
     "QueuePolicy",
     "RegisteredAgentProfile",
     "RunStatus",

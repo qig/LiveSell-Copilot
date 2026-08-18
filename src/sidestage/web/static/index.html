@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="SideStage Milestone 2 synthetic live-selling marketplace workspace"
+      content="SideStage synthetic live-selling workspace with a review-first copilot inbox"
     />
     <title>SideStage — Marketplace emulator</title>
     <link rel="stylesheet" href="./styles.css" />
@@ -44,10 +44,10 @@
           <span class="status-dot" aria-hidden="true"></span>
           <span id="stream-status">Room ready</span>
         </div>
-        <div class="status-chip status-chip--muted">
-          <span>Copilot off</span>
-          <span class="status-suffix">M2</span>
-        </div>
+        <button class="status-chip status-chip--muted r3-toggle" id="r3-toggle" type="button">
+          <span id="r3-toggle-label">Review first</span>
+          <span class="status-suffix">R2</span>
+        </button>
         <a class="icon-link" href="./debug.html" aria-label="Open developer ledger">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" />
@@ -122,8 +122,8 @@
       <section class="surface show-surface" aria-labelledby="show-desk-title">
         <header class="surface-header show-surface-header">
           <div>
-            <p class="eyebrow">Show desk</p>
-            <h2 id="show-desk-title">Current cue</h2>
+            <p class="eyebrow">Copilot inbox</p>
+            <h2 id="show-desk-title">Review before sending.</h2>
           </div>
           <div class="cue-readout">
             <span>Active SKU</span>
@@ -131,12 +131,37 @@
           </div>
         </header>
 
+        <div class="r3-warning" id="r3-warning" role="status" hidden>
+          <div>
+            <strong>Bounded auto-reply is on.</strong>
+            <p>Only fresh current price, exact variant availability, and exact policy answers can send automatically.</p>
+          </div>
+          <button class="button button--paper" id="r3-disable" type="button">Disable now</button>
+        </div>
+
         <article class="active-cue" id="active-cue" aria-live="polite">
           <div class="cue-loading">
             <span class="loading-rule"></span>
             <span class="loading-rule loading-rule--short"></span>
           </div>
         </article>
+
+        <section class="copilot-section" aria-labelledby="copilot-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Buyer questions</p>
+              <h3 id="copilot-title">Copilot Inbox</h3>
+            </div>
+            <span class="section-note" id="copilot-count">0 questions</span>
+          </div>
+          <p class="copilot-assurance">AI drafts never send by themselves in R2. Accept, edit, or answer in your own words.</p>
+          <div class="copilot-list" id="copilot-list" aria-live="polite">
+            <div class="copilot-empty">
+              <strong>No questions yet.</strong>
+              <p>Buyer questions will appear here after they pass deterministic routing.</p>
+            </div>
+          </div>
+        </section>
 
         <section class="operation-section" aria-labelledby="operation-title">
           <div class="section-heading">
@@ -203,7 +228,7 @@
     </main>
 
     <footer class="workspace-footer">
-      <p><span>Synthetic demo state</span> Server-owned SQLite · SSE live sync · no AI or customer commerce</p>
+      <p><span>Synthetic demo state</span> Server-owned SQLite · SSE live sync · review-first AI · no customer commerce</p>
     </footer>
 
     <dialog class="operation-dialog" id="operation-dialog">

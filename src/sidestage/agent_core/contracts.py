@@ -302,6 +302,9 @@ class AgentRunResult(FrozenContract):
     failure: Optional[CoreFailure] = None
     latency: LatencyBreakdown
     completed_monotonic_s: NonNegativeFiniteFloat
+    provider_metadata: FrozenJsonObject = Field(
+        default_factory=lambda: FrozenJsonObject({})
+    )
 
     @model_validator(mode="after")
     def require_one_terminal_outcome(self) -> "AgentRunResult":

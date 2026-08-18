@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Iterator
 
 from sidestage.fixtures.loader import SellerCatalog
-from sidestage.storage.repositories import initialize_schema, seed_catalog
+from sidestage.storage.repositories import (
+    initialize_schema,
+    seed_catalog,
+    seed_copilot_evidence,
+)
 
 
 class MarketplaceDatabase:
@@ -25,7 +30,12 @@ class MarketplaceDatabase:
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
-    def initialize(self, catalog: SellerCatalog) -> None:
+    def initialize(
+        self,
+        catalog: SellerCatalog,
+        *,
+        evidence_imported_at: str | None = None,
+    ) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock, self.connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
@@ -33,6 +43,11 @@ class MarketplaceDatabase:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 seed_catalog(connection, catalog)
+                seed_copilot_evidence(
+                    connection,
+                    catalog,
+                    imported_at=evidence_imported_at or _utc_millis(),
+                )
             except Exception:
                 connection.rollback()
                 raise
@@ -59,3 +74,7 @@ class MarketplaceDatabase:
     def journal_mode(self) -> str:
         with self.read() as connection:
             return str(connection.execute("PRAGMA journal_mode").fetchone()[0])
+
+
+def _utc_millis() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")

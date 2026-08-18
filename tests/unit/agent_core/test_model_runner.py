@@ -13,6 +13,7 @@ from sidestage.agent_core import (
     AgentTask,
     CoreFailureCode,
     DeadlinePolicy,
+    ModelRequestProjection,
     QueuePolicy,
     RunStatus,
     TerminalToolSchema,
@@ -26,6 +27,7 @@ from sidestage.agent_core.model import (
     ModelTerminalCall,
     OpenAICompatibleModelConfig,
     OpenAICompatibleModelRunner,
+    OpenRouterRoutingConfig,
     ScriptedModelRunner,
 )
 
@@ -338,6 +340,7 @@ def test_openai_compatible_runner_maps_one_http_request() -> None:
             api_key=SecretStr("credential-must-not-leak"),
             model_id="provider-model-pinned",
             request_timeout_s=3.0,
+            strict_function_tools=True,
             reasoning_effort="none",
         ),
         http_client=client,
@@ -361,8 +364,234 @@ def test_openai_compatible_runner_maps_one_http_request() -> None:
         "user",
     ]
     assert request["json"]["tools"][0]["function"]["name"] == "emit_answer"
+    assert request["json"]["tools"][0]["function"]["strict"] is True
+    assert request["json"]["tools"][0]["function"]["parameters"] == {
+        "type": "object",
+        "properties": {"answer": {"type": "string"}},
+        "required": ["answer"],
+        "additionalProperties": False,
+    }
+    assert profile.terminal_tools[0].parameters_schema.to_dict()["properties"][
+        "answer"
+    ]["minLength"] == 1
     assert request["timeout"] == 3.0
     assert "credential-must-not-leak" not in json.dumps(request["json"])
+
+
+def test_openrouter_request_disables_fallbacks_and_records_sanitized_routing_metadata() -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "gen-openrouter-1",
+                "model": "deepseek/deepseek-chat-v3.1",
+                "provider": "DeepInfra",
+                "service_tier": "default",
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-openrouter-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "emit_answer",
+                                        "arguments": '{"answer":"Routed result"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 12,
+                    "total_tokens": 112,
+                    "cost": 0.0012,
+                    "completion_tokens_details": {"reasoning_tokens": 3},
+                    "prompt_tokens_details": {"cached_tokens": 20},
+                },
+                "openrouter_metadata": {
+                    "requested": "deepseek/deepseek-chat-v3.1",
+                    "strategy": "direct",
+                    "attempt": 1,
+                    "attempts": [
+                        {
+                            "provider": "DeepInfra",
+                            "model": "deepseek/deepseek-chat-v3.1",
+                            "status": 200,
+                            "authorization": "must-not-be-recorded",
+                        }
+                    ],
+                },
+            }
+
+    class FakeHttpClient:
+        def __init__(self) -> None:
+            self.requests: list[dict] = []
+
+        async def post(self, url: str, **kwargs):
+            self.requests.append({"url": url, **kwargs})
+            return FakeResponse()
+
+    profile = make_profile()
+    now = time.monotonic()
+    registered = register_profile(profile)
+    invocation = ModelInvocation(
+        model_config_ref=profile.model_config_ref,
+        request=registered.project_model_request(
+            make_task(profile, now=now),
+            now_monotonic_s=now,
+        ),
+    )
+    client = FakeHttpClient()
+    runner = OpenAICompatibleModelRunner(
+        OpenAICompatibleModelConfig(
+            config_ref=profile.model_config_ref,
+            base_url="https://openrouter.ai/api/v1",
+            api_key=SecretStr("openrouter-secret"),
+            model_id="deepseek/deepseek-chat-v3.1",
+            request_timeout_s=3.0,
+            strict_function_tools=True,
+            openrouter_routing=OpenRouterRoutingConfig(),
+        ),
+        http_client=client,
+    )
+
+    response = asyncio.run(runner.run(invocation))
+
+    request = client.requests[0]
+    assert request["headers"]["X-OpenRouter-Metadata"] == "enabled"
+    assert "parallel_tool_calls" not in request["json"]
+    assert request["json"]["provider"] == {
+        "allow_fallbacks": False,
+        "require_parameters": True,
+        "sort": "latency",
+        "data_collection": "deny",
+    }
+    metadata = response.provider_metadata.to_dict()
+    assert metadata["requested_model_id"] == "deepseek/deepseek-chat-v3.1"
+    assert metadata["resolved_model_id"] == "deepseek/deepseek-chat-v3.1"
+    assert metadata["resolved_provider"] == "DeepInfra"
+    assert metadata["routing_attempts"] == [
+        {
+            "provider": "DeepInfra",
+            "model": "deepseek/deepseek-chat-v3.1",
+            "status": 200,
+        }
+    ]
+    assert metadata["usage"] == {
+        "prompt_tokens": 100,
+        "completion_tokens": 12,
+        "total_tokens": 112,
+        "cost": 0.0012,
+        "reasoning_tokens": 3,
+        "cached_tokens": 20,
+    }
+    assert "openrouter-secret" not in json.dumps(metadata)
+    assert "authorization" not in json.dumps(metadata)
+
+    with pytest.raises(ValidationError):
+        OpenRouterRoutingConfig(allow_fallbacks=True)
+
+
+def test_strict_provider_projection_preserves_local_only_schema_validation() -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "model": "provider-model-pinned",
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "emit_strict",
+                                        "arguments": (
+                                            '{"state":"certain","tags":["one"],"value":"ok"}'
+                                        ),
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ],
+            }
+
+    class FakeHttpClient:
+        def __init__(self) -> None:
+            self.requests: list[dict] = []
+
+        async def post(self, url: str, **kwargs):
+            self.requests.append({"url": url, **kwargs})
+            return FakeResponse()
+
+    local_schema = {
+        "type": "object",
+        "properties": {
+            "state": {"type": "string", "const": "certain"},
+            "tags": {
+                "type": "array",
+                "uniqueItems": True,
+                "items": {"type": "string", "minLength": 1},
+            },
+            "value": {"type": "string", "minLength": 1, "maxLength": 8},
+        },
+        "required": ["state", "tags", "value"],
+        "additionalProperties": False,
+    }
+    invocation = ModelInvocation(
+        model_config_ref="strict-subset-v1",
+        request=ModelRequestProjection(
+            system_policy="Choose the terminal tool.",
+            model_input={"prompt": "test"},
+            terminal_tools=(
+                TerminalToolSchema(
+                    name="emit_strict",
+                    description="Emit a strict payload.",
+                    parameters_schema=local_schema,
+                ),
+            ),
+        ),
+    )
+    client = FakeHttpClient()
+    runner = OpenAICompatibleModelRunner(
+        OpenAICompatibleModelConfig(
+            config_ref="strict-subset-v1",
+            base_url="https://provider.invalid/v1",
+            api_key=SecretStr("credential-must-not-leak"),
+            model_id="provider-model-pinned",
+            request_timeout_s=3.0,
+            strict_function_tools=True,
+        ),
+        http_client=client,
+    )
+
+    asyncio.run(runner.run(invocation))
+
+    provider_schema = client.requests[0]["json"]["tools"][0]["function"][
+        "parameters"
+    ]
+    assert provider_schema == {
+        "type": "object",
+        "properties": {
+            "state": {"type": "string", "enum": ["certain"]},
+            "tags": {"type": "array", "items": {"type": "string"}},
+            "value": {"type": "string"},
+        },
+        "required": ["state", "tags", "value"],
+        "additionalProperties": False,
+    }
+    assert invocation.request.terminal_tools[0].parameters_schema.to_dict() == local_schema
 
 
 def test_openai_compatible_config_rejects_credentials_in_base_url() -> None:
@@ -386,3 +615,4 @@ def test_openai_compatible_runner_omits_unspecified_reasoning_effort() -> None:
     )
 
     assert config.reasoning_effort is None
+    assert config.strict_function_tools is False

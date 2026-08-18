@@ -465,7 +465,7 @@
 
 .trace-stage-rail {
   display: grid;
-  grid-template-columns: repeat(7, minmax(120px, 1fr));
+  grid-template-columns: repeat(8, minmax(120px, 1fr));
   gap: 0;
   margin-top: 16px;
   overflow-x: auto;
@@ -543,8 +543,10 @@
   text-transform: uppercase;
 }
 
-.trace-stage.is-passed::after { background: var(--green); }
-.trace-stage.is-passed .trace-stage-number { background: var(--green); }
+.trace-stage.is-passed::after,
+.trace-stage.is-completed::after { background: var(--green); }
+.trace-stage.is-passed .trace-stage-number,
+.trace-stage.is-completed .trace-stage-number { background: var(--green); }
 .trace-stage.is-simulated::after { background: var(--blue); }
 .trace-stage.is-simulated .trace-stage-number { background: var(--blue); }
 .trace-stage.is-blocked::after,
@@ -658,7 +660,8 @@
   letter-spacing: 0.07em;
 }
 
-.trace-stage-facts span.is-passed { background: var(--green-soft); color: var(--green); }
+.trace-stage-facts span.is-passed,
+.trace-stage-facts span.is-completed { background: var(--green-soft); color: var(--green); }
 .trace-stage-facts span.is-simulated { background: var(--blue-soft); color: var(--blue); }
 .trace-stage-facts span.is-blocked,
 .trace-stage-facts span.is-failed { background: var(--red-soft); color: var(--red); }

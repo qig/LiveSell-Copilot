@@ -29,7 +29,7 @@
 
       <div class="header-statuses">
         <div class="status-chip status-chip--muted">
-          <span>Demo trace</span><span class="status-suffix">Agent offline</span>
+          <span>Runtime traces</span><span class="status-suffix">8 stages</span>
         </div>
         <button class="button button--quiet" id="refresh-ledger" type="button">Refresh</button>
         <a class="button button--paper" href="./index.html">Seller workspace</a>
@@ -42,14 +42,14 @@
           <p class="eyebrow">Message trace</p>
           <h1 id="trace-title">Where did this message stop?</h1>
           <p class="trace-lede">
-            Follow one customer message toward a reply. The trace stops where the current build stops.
+            Inspect the persisted observations emitted around the exact backend calls for one accepted message.
           </p>
         </div>
         <div class="trace-disclosure">
-          <span class="trace-disclosure-mark" aria-hidden="true">P</span>
+          <span class="trace-disclosure-mark" aria-hidden="true">R</span>
           <div>
-            <strong>Simulated flow · agent not connected</strong>
-            <small>No reply can move past the Agent stage in this build.</small>
+            <strong>Live backend projection</strong>
+            <small>Stage identity, status, and observation IDs come from SQLite—not frontend inference.</small>
           </div>
         </div>
       </section>
@@ -96,9 +96,9 @@
       <section class="trace-console" aria-label="Trace scenario controls">
         <div class="trace-controls">
           <label>
-            <span>Scenario</span>
+            <span>Actual route</span>
             <select id="trace-scenario" disabled>
-              <option>Loading trace fixtures…</option>
+              <option value="all">Loading runtime filters…</option>
             </select>
           </label>
           <label>
@@ -107,13 +107,13 @@
               <option>Waiting for scenario</option>
             </select>
           </label>
-          <button class="button button--paper" id="reset-trace" type="button" disabled>Reset</button>
+          <button class="button button--paper" id="reset-trace" type="button" disabled>All routes</button>
           <button class="button button--signal trace-run" id="run-trace" type="button" disabled>
-            Run trace
+            Refresh runtime
           </button>
         </div>
         <div class="trace-control-status" id="trace-status" role="status" aria-live="polite">
-          Loading demo messages…
+          Loading persisted runtime traces…
         </div>
       </section>
 
@@ -121,13 +121,13 @@
         <div class="trace-event-index" id="trace-event-index">—</div>
         <div class="trace-event-question">
           <span id="trace-event-customer">Customer</span>
-          <h2 id="trace-event-title">Select a trace event</h2>
+          <h2 id="trace-event-title">Select a runtime trace</h2>
           <p id="trace-event-text">The raw buyer message will appear here.</p>
         </div>
         <dl class="trace-event-meta" id="trace-event-meta">
           <div><dt>Trace</dt><dd>—</dd></div>
-          <div><dt>Bound SKU</dt><dd>—</dd></div>
-          <div><dt>Expected</dt><dd>—</dd></div>
+          <div><dt>Actual route</dt><dd>—</dd></div>
+          <div><dt>Expected oracle</dt><dd>—</dd></div>
         </dl>
       </section>
 
@@ -137,7 +137,7 @@
         <span class="trace-diagnosis-icon" id="trace-diagnosis-icon" aria-hidden="true">···</span>
         <div>
           <p class="eyebrow">First decisive stage</p>
-          <h2 id="trace-diagnosis-title">Trace fixture loading</h2>
+          <h2 id="trace-diagnosis-title">Runtime trace loading</h2>
           <p id="trace-diagnosis-message">The diagnostic summary will identify where processing stopped.</p>
         </div>
         <div class="trace-diagnosis-time">
@@ -157,18 +157,18 @@
             <code id="trace-stage-duration">—</code>
           </div>
         </header>
-        <p class="trace-stage-summary" id="trace-stage-summary">Choose a stage to inspect the simulated input and output.</p>
+        <p class="trace-stage-summary" id="trace-stage-summary">Choose a stage to inspect its backend observation and sanitized artifact.</p>
         <div class="trace-stage-reason-row">
           <span>Reason code</span>
           <code id="trace-stage-reason">—</code>
         </div>
         <div class="trace-payload-grid">
           <article>
-            <header><span>Stage input</span><small>Demo JSON</small></header>
+            <header><span>Backend identity</span><small>Persisted observation</small></header>
             <pre id="trace-stage-input">null</pre>
           </article>
           <article>
-            <header><span>Stage output</span><small>Demo JSON</small></header>
+            <header><span>Stage artifacts</span><small>Sanitized runtime JSON</small></header>
             <pre id="trace-stage-output">null</pre>
           </article>
         </div>
