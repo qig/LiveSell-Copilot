@@ -54,6 +54,57 @@
         </div>
       </section>
 
+      <section class="runtime-session" aria-labelledby="runtime-session-title">
+        <header class="runtime-session-header">
+          <div>
+            <p class="eyebrow">Optimization and debug session</p>
+            <h2 id="runtime-session-title">Run the next accepted question on a selected configuration.</h2>
+            <p>Only startup-approved workflow/model pairs are available. Existing and in-flight questions keep their pinned version.</p>
+          </div>
+          <div class="runtime-active-mark">
+            <span>Active</span>
+            <strong id="runtime-active-version">v—</strong>
+            <small id="runtime-next-phase">Next · —</small>
+          </div>
+        </header>
+
+        <form class="runtime-controls" id="runtime-form">
+          <label>
+            <span>Workflow</span>
+            <select id="runtime-workflow" disabled>
+              <option>Loading workflows…</option>
+            </select>
+          </label>
+          <label>
+            <span>Model profile</span>
+            <select id="runtime-model" disabled>
+              <option>Loading model profiles…</option>
+            </select>
+          </label>
+          <button class="button button--signal" id="runtime-apply" type="submit" disabled>Apply to new chat</button>
+        </form>
+
+        <div class="runtime-selection-summary">
+          <dl>
+            <div><dt>Workflow</dt><dd id="runtime-active-workflow">—</dd></div>
+            <div><dt>Requested model</dt><dd id="runtime-active-model">—</dd></div>
+            <div><dt>Profile</dt><dd id="runtime-active-profile">—</dd></div>
+            <div><dt>Provider</dt><dd id="runtime-active-provider">—</dd></div>
+          </dl>
+          <p id="runtime-status" role="status" aria-live="polite">Loading the server-owned runtime catalog…</p>
+        </div>
+
+        <div class="runtime-metrics">
+          <div class="runtime-metrics-heading">
+            <div><span>Observed reply latency</span><strong>Cold / steady / combined</strong></div>
+            <small>The switch itself is outside the 2-second reply boundary.</small>
+          </div>
+          <div class="runtime-metrics-table" id="runtime-metrics-table">
+            <p>No model-backed samples yet.</p>
+          </div>
+        </div>
+      </section>
+
       <section class="import-trace" id="import-trace-panel" aria-labelledby="import-trace-title">
         <header class="import-trace-header">
           <div>

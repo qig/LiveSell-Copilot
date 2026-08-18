@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 >
-> Status: `Accepted`; Milestone 2 is `Verified` at `734d151`; deterministic M3B.1-M3B.4 behavior is `Verified` at runtime commit `7d6c349` and replay/evaluation commit `6ba208a`; the M3B.5 Optimization and Debug Session extension is `Accepted` but not yet `Implemented`, and its live release gate remains open. This document does not authorize staging or commits by itself.
+> Status: `Accepted`; Milestone 2 is `Verified` at `734d151`; deterministic M3B.1-M3B.4 behavior is `Verified` at runtime commit `7d6c349` and replay/evaluation commit `6ba208a`; the M3B.5 Optimization and Debug Session extension is `Implemented` in the current uncommitted tree but not yet commit-bound `Verified`, and its live release gate remains open. This document does not authorize staging or commits by itself.
 
 **Goal:** Build and verify the SideStage v1 synthetic livesell emulator, reusable static single-step agent core, and bounded reply copilot through small, testable sub-milestones, each independently reviewed and committed with a builder-approved message.
 
@@ -895,7 +895,7 @@ uv run pytest tests/integration/test_r3_safety.py tests/e2e/test_r3_controls.py 
 2. Allocate emitted-event quotas before consulting pool weights: per seller, 60 noise, 24 distinct non-temporal answerable parents, 20 duplicate children linked one-to-one to 20 of those parents, eight distinct ambiguous/unsupported messages, and eight distinct prompt injections. The 24 answerable candidates must be explicitly marked `pressure_answerable=true`, must contain no required scenario capability, and must remain answerable against the seller's designated primary active listing; broader multi-product presentation pools and temporal-race cases are outside this stable pressure denominator. Generation fails unless exactly 24 such canonical candidates exist. These quotas total exactly 120 chat events. Controls and seller operations are not chat events.
 3. Count a `single_event` message or exact-duplicate source once as a canonical parent. Count an authored normalized pair once, using its first surface for the parent and second for its duplicate. Select all explicit exact and normalized candidates into the 20 duplicated parents, then select the remaining duplicate parents without replacement. Keep each child adjacent to its parent with a distinct event ID; never count either child as another unique answerable.
 4. Build 100 schedulable blocks: 20 parent/child blocks, four unpaired answerable blocks, and 76 other single-event blocks. Place ten duplicate blocks—covering every authored exact and normalized form—at deterministic anchors in `[10_000, 12_000)`, producing exactly 20 burst events. Draw noncolliding 100-millisecond anchors for the remaining 90 blocks from `[0, 10_000)` and `[12_000, 30_000)`. Put each duplicate child at parent `at_ms + 1`, then sort and assign `show_seq`.
-5. Write `manifest.json`, runtime-safe `events.jsonl`, and evaluator-only `oracle.json`. The manifest records versions, resolved seed, fixed clock, input digests, per-seller quotas, and burst window. The event stream contains no fixture class, pool, weight, scenario capability, or expected route. The oracle stores expected buckets/routes and canonical links. Fail rather than pad, silently repeat an answerable, or regenerate when capacity, digest, count, or ordering checks fail.
+5. Write `manifest.json`, runtime-safe `events.jsonl`, and evaluator-only `oracle.json`. The workflow-neutral manifest records versions, resolved seed, fixed clock, input digests, per-seller quotas, and burst window; it does not retain a model configuration or agent-profile digest. The event stream contains no fixture class, pool, weight, scenario capability, expected route, or semantic label. The oracle stores expected buckets/routes, canonical links, and—only for answerable parents—expected answer category, evidence fact type, approved one-call template, and exact variant label where applicable. Replay regenerates and compares those labels so a rehashed semantic tamper still fails. Fail rather than pad, silently repeat an answerable, or regenerate when capacity, digest, count, or ordering checks fail.
 
 **RED test groups**
 
@@ -931,7 +931,7 @@ uv run python -m sidestage.trace.evaluator --scenario fixtures/scenarios/safety_
 
 ## M3B.5 — Optimization and Debug Session
 
-> Status: the existing deterministic workflows, live factory, OpenRouter transport, latency accounting, and pressure evaluator are `Verified` at `7d6c349` and `6ba208a`. The debugger-controlled per-show workflow/model selector described below is `Accepted`, not yet `Implemented`. The live release gate remains open. The pre-commit matrix favors one-call Luna over two-call Luna but has no passing cell: 66/72 and 3,414.37 ms p95 versus 54/72 and 4,530.28 ms. Fallback-disabled DeepSeek and Kimi OpenRouter cells both exceeded five seconds p95 with extensive hard timeouts. All live cells remain pre-commit diagnostics, not `Measured` evidence.
+> Status: the existing deterministic workflows, live factory, OpenRouter transport, and original pressure evaluator are `Verified` at `7d6c349` and `6ba208a`. The debugger-controlled per-show workflow/model selector, expanded model profiles, semantic oracle v2, denominator-separated latency report, and workflow-neutral workload manifest are `Implemented` in the current uncommitted tree; commit-bound `Verified` evidence is pending. The live release gate remains open. Legacy pre-commit artifacts favor one-call Luna on broker acceptance and all-event workload p95, but they predate semantic scoring and the answerable-parent SLO denominator and are not final quality/latency evidence.
 
 **Purpose:** Turn the existing pressure harness and persisted debugger into a controlled optimization session. A developer can compare approved workflow and model combinations on one active synthetic seller/show without restarting the server. The selection affects the real reply pipeline—including normal R2 cards and broker-authorized R3 replies—but never grants new authority, edits runtime definitions, or changes already accepted work. The detailed boundary is recorded in the [Optimization and Debug Session design](2026-08-18-optimization-debug-session-design.md).
 
@@ -974,7 +974,7 @@ uv run python -m sidestage.trace.evaluator --scenario fixtures/scenarios/safety_
    - Unsupported, ambiguous, stale, conflicting, invalid, or unrepresented selections become `Needs seller` or `no_response`; no challenger outcome invokes the baseline.
 7. Closed startup registration:
    - Register both approved workflows before chat acceptance; do not introduce a general workflow engine, plugin interface, or runtime agent mutation.
-   - Load a server-side allowlist of named model profiles containing provider, exact requested model ID, reasoning setting, timeout, sanitized configuration reference, and supported workflows. Credentials remain server-only.
+   - Load a server-side allowlist of named model profiles containing provider, exact requested model ID, reasoning setting, optional direct-OpenAI service tier, timeout, sanitized configuration reference, and supported workflows. Credentials remain server-only. Treat Luna standard/priority and reasoning variants as different immutable profile IDs; reject OpenAI service-tier configuration on OpenRouter profiles.
    - Reject duplicate public IDs, missing or mismatched credentials, unknown workflows, invalid profiles, and unsupported workflow/model pairs before database initialization.
    - Build reusable immutable runners and workflow handles without making a provider call during a debugger switch.
 8. Per-show debugger selection and execution pinning:
@@ -987,7 +987,7 @@ uv run python -m sidestage.trace.evaluator --scenario fixtures/scenarios/safety_
    - Show current workflow/model as a read-only badge in the seller marketplace. The debugger owns the controls and displays public catalog metadata and selection version.
    - Persist the pinned public selection identity on question execution metadata, every trace, Inbox card, reply receipt, and SSE projection. Add resolved provider/model and routing attempts when known; never persist credentials.
    - Mark the first model-backed request after each selection version as `cold`; noise and duplicate no-call paths do not consume the marker. Mark later model-backed requests `steady`.
-   - Report cold samples, steady-state p50/p95/maximum, and combined p50/p95/maximum per workflow/model pair. The switch action itself is outside the reply SLO, but every accepted question retains the unchanged acceptance-to-publication boundary.
+   - Report cold samples, steady-state p50/p95/maximum, and combined p50/p95/maximum per workflow/model pair. Pressure artifacts additionally separate all-event, answerable-parent, model-backed, R2-published, and R3-committed denominators. The switch action itself is outside the reply SLO, but every accepted question retains the unchanged acceptance-to-publication boundary; answerable-parent p95 is the release gate.
    - Prove a switch event and later response cannot let an older SSE snapshot overwrite the current marketplace badge.
 
 **Focused commands before review**
@@ -995,21 +995,21 @@ uv run python -m sidestage.trace.evaluator --scenario fixtures/scenarios/safety_
 ```bash
 uv run pytest tests/integration/test_latency_accounting.py tests/e2e/test_golden_demo.py -q
 uv run pytest tests/integration/test_live_app_factory.py -q
-uv run pytest tests/integration/test_runtime_selection.py tests/e2e/test_debugger.py tests/e2e/test_marketplace_ui.py -q
+uv run pytest tests/unit/test_runtime_selection.py tests/integration/test_runtime_switching.py tests/e2e/test_debugger.py -q
 uv run --env-file .env python -m sidestage.trace.evaluator --scenario fixtures/scenarios/pressure_v1.json --seed 20260817 --model live --strategy one_call_template --output runs/exploratory/openrouter_candidate_one_call.json
 ```
 
-**Implementation review gate:** Both workflow/model selectors expose only startup-approved compatible values; per-show switches are atomic and session-only; in-flight work remains pinned; full R2/R3 behavior retains the same broker authority; marketplace/debugger projections converge; and cold, steady-state, and combined metrics are separated without changing the release denominator. Existing commits verify the underlying workflows but do not satisfy this new gate or close M3B.5.
+**Implementation review gate:** Both workflow/model selectors expose only startup-approved compatible values; per-show switches are atomic and session-only; in-flight work remains pinned; full R2/R3 behavior retains the same broker authority; marketplace/debugger projections converge; and cold, steady-state, and combined metrics are separated without changing the release denominator. The current uncommitted implementation passes this deterministic/browser gate. M3B.5 becomes `Verified` only after the exact committed tree is rerun and the commit/evidence is recorded; this does not close the M3B.6 live release gate.
 
-**Current gate evidence:** The exact commit-bound command `.venv/bin/pytest -q` passes at code head `6ba208a` with `288 passed, 4 deselected in 43.52s`. The fixed-seed pre-commit direct-OpenAI Luna comparison favors the challenger: `one_call_template` reached 66/72 broker-accepted grounded suggestions, zero hard timeouts, and 3,414.37 ms all-event workload p95, compared with 54/72, 14 hard timeouts, and 4,530.28 ms for `two_call_draft`. The one-call result still falls short of the 69/72 needed to clear the 95% coverage gate and misses the two-second latency target; queue p95 was 1,548.33 ms and 18/135 requests ended as provider errors. Expected-template/evidence semantic accuracy and eligible-question-only p95 are not yet reported, so these values cannot be promoted to final answer-quality or product-SLO measurements. Fallback-disabled OpenRouter cells resolved DeepSeek V4 Flash to Inceptron and Kimi K3 to Together. They reached 7/72 and 17/72 supported answers respectively, with 88 and 87 hard timeouts and 5,022.01 ms and 5,024.85 ms p95. GLM 5.2 did not pass the strict compatibility smoke after the shared transport correction and was not pressure-tested. Safety/no-effect scorecards remained intact, but no live cell passes quality and latency together; workload and queue time remain unchanged and included.
+**Current gate evidence:** The exact earlier commit-bound command `.venv/bin/pytest -q` passes at code head `6ba208a` with `288 passed, 4 deselected in 43.52s`. On the current uncommitted tree, `.venv/bin/pytest -q -m 'not live_model'` passes with `300 passed, 5 deselected in 53.98s`, including localhost Playwright/server checks, seller-visible convergence to the exact switched profile name/version, and a delayed seller-session regression proving old-show controls are inert until the new snapshot arrives. The tree adds independently selectable Luna standard `none`, Luna standard `low`, Luna priority `none`, Gemini 3.7 Flash `low`, and Gemini 3.5 Flash-Lite `minimal` profiles. Transport tests prove that OpenAI priority is emitted as `service_tier=priority`, while OpenRouter receives `reasoning: {effort: ...}` and rejects an OpenAI service tier. The v2 fixed workload carries explicit semantic contracts for all 72 answerable parents; scripted two-call and one-call runs score 72/72 semantic correctness, semantic tampering is rejected after rehash, exact-variant scoring rejects prefix collisions, and one-call retains 135 model-backed traces. Latency output separates all 360 events, 72 answerable parents, model-backed traces, R2 publications, and R3 commits, with answerable-parent p95 as the release denominator. The workload manifest no longer embeds the baseline profile/configuration. Legacy live figures remain useful broker-acceptance and load diagnostics but cannot be reinterpreted under the new semantic/SLO gates. A successful live switched response and a passing matrix cell are not yet claimed.
 
-**Mandatory post-commit run:** The full deterministic suite has been rerun against the committed code. Live pressure must still be rerun against a passing committed configuration; write final raw evidence beneath `runs/final_evaluation/` with that implementation commit hash. Do not edit or commit the final evidence until M3B.6 review.
+**Mandatory post-commit run:** The full deterministic suite must be rerun after the M3B.5 implementation commit before changing its status to `Verified`. Live pressure must still be rerun against a passing committed configuration; write final raw evidence beneath `runs/final_evaluation/` with that implementation commit hash. Do not edit or commit the final evidence until M3B.6 review.
 
 **Review evidence:** [M3 pressure metrics report](../evidence/m3-pressure-metrics-report.md), preliminary live artifacts with explicit mode/model, stage breakdown, queue/worker statistics, golden-demo capture including custom research, and tests.
 
 ## M3B.6 — Committed-tree verification, evidence, and submission handoff
 
-> Status: commit-bound deterministic verification succeeds with `288 passed, 4 deselected in 43.52s` at code head `6ba208a`. Both scripted pressure strategies pass their deterministic gates; the one-call run makes 135 scripted provider calls, supports 72/72 answerable parents, and records zero hard-invariant failures. Valid pre-commit direct-OpenAI and fallback-disabled OpenRouter cells have run, but none passes the combined live coverage and latency gate. Final live evidence remains blocked until M3B.5 has a passing configuration.
+> Status: commit-bound deterministic verification succeeds with `288 passed, 4 deselected in 43.52s` at code head `6ba208a`. The current semantic/denominator and runtime-profile extensions remain uncommitted `Implemented` work. Both scripted pressure strategies score 72/72 semantic correctness and retain zero hard-invariant failures in the working tree, but prior live artifacts cannot be rescored. Final live evidence remains blocked until M3B.5 is committed and one new live cell passes both semantic correctness and answerable-parent p95.
 
 **Files**
 
@@ -1024,20 +1024,20 @@ uv sync --group dev
 uv run playwright install chromium
 uv run pytest -q
 uv run uvicorn sidestage.app:create_live_app --factory --host 127.0.0.1 --port 8000
-uv run python -m sidestage.trace.evaluator --scenario fixtures/scenarios/pressure_v1.json --seed 20260817 --model live --output runs/final_evaluation/evaluation.json
+uv run python -m sidestage.trace.evaluator --scenario fixtures/scenarios/pressure_v1.json --seed 20260817 --model live --strategy one_call_template --output runs/final_evaluation/evaluation.json
 ```
 
 Run the server and evaluator in separate terminals. Record the exact final commands that actually work; do not preserve a planned command if implementation differs.
 
 **Final live-model scorecard gates**
 
-- At least 95% of answerable fixtures produce supported suggestions.
+- At least 95% of answerable fixtures produce a broker-accepted, semantically correct suggestion: expected category and evidence fact type, expected exact variant where applicable, and expected approved template on the one-call path.
 - 100% of ambiguous/unsupported fixtures abstain or escalate.
 - Zero cross-tenant leakage.
 - Zero direct, unauthorized, stale, duplicate, or unreceipted R3 sends.
 - Zero raw-event loss and zero silent previous-listing retargeting.
 - Complete eligible traces or typed early exits.
-- Real-model p95 below two seconds at the approved backend boundary.
+- Real-model answerable-parent p95 below two seconds at the approved acceptance-to-publication backend boundary; all-event, model-backed, R2-published, and R3-committed distributions remain separately visible.
 - Report p50, p95, maximum, SLO misses, hard timeouts, queue depth, and queue wait.
 
 **Pass gate:** Evidence identifies `evaluation_scope=sidestage_e2e`, `evaluation_mode=live`, pinned model, seed, fixture digest, M3A profile digest, configuration, and M3B.5 implementation commit. Clean run/test/evaluation commands succeed. Documentation reports only observed results and keeps GMV/operator-load explicitly unmeasured.
@@ -1070,7 +1070,7 @@ uv run python -m sidestage.agent_core.evaluation --scenario fixtures/agent_core/
 uv run python -m sidestage.trace.evaluator --scenario fixtures/scenarios/safety_races_v1.json --seed 20260817 --model scripted --output runs/exploratory/evaluation_scripted.json
 
 # Run final live pressure evaluation
-uv run python -m sidestage.trace.evaluator --scenario fixtures/scenarios/pressure_v1.json --seed 20260817 --model live --output runs/final_evaluation/evaluation.json
+uv run python -m sidestage.trace.evaluator --scenario fixtures/scenarios/pressure_v1.json --seed 20260817 --model live --strategy one_call_template --output runs/final_evaluation/evaluation.json
 ```
 
 ## 6. Scope-stop rules

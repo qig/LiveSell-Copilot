@@ -18,6 +18,7 @@ from sidestage.fixtures.generator import (
     ORACLE_SCHEMA_VERSION,
     OracleEvent,
     RuntimeChatEvent,
+    generate_pressure,
 )
 
 
@@ -33,6 +34,9 @@ _FORBIDDEN_RUNTIME_KEYS = {
     "expected_outcome",
     "canonical_event_id",
     "oracle",
+    "expected_semantic",
+    "pressure_answer_keys",
+    "pressure_answer_contracts",
 }
 _EXPECTED_ROUTES = {
     "noise": "noise",
@@ -242,6 +246,26 @@ class LivesellReplay:
                     )
             if counts != quotas or manifest_counts.get(seller_id) != counts:
                 raise ReplayArtifactError(f"seed={self.seed} seller={seller_id}: quota mismatch")
+        try:
+            regenerated = generate_pressure(
+                self.scenario_path,
+                seed=self.seed,
+                sellers_path=self.sellers_path,
+                chat_path=self.chat_path,
+            )
+        except Exception as error:
+            raise ReplayArtifactError(
+                f"seed={self.seed}: cannot reconstruct semantic oracle"
+            ) from error
+        expected_semantics = {
+            item["event_id"]: item["expected_semantic"]
+            for item in regenerated.oracle["events"]
+        }
+        if any(
+            label["expected_semantic"] != expected_semantics.get(event_id)
+            for event_id, label in oracle_by_id.items()
+        ):
+            raise ReplayArtifactError(f"seed={self.seed}: semantic oracle mismatch")
 
 
 def _digest(path: Path) -> str:

@@ -16,6 +16,7 @@ from sidestage.agent_core import (
     AgentTask,
     CoreFailureCode,
     DeadlinePolicy,
+    LatencyBreakdown,
     ModelResponse,
     ModelRunner,
     QueuePolicy,
@@ -93,6 +94,7 @@ class AnalysisResult(AnalysisContract):
     agent_run_id: Optional[str] = None
     profile_digest: Optional[str] = None
     provider_metadata: dict[str, Any] = Field(default_factory=dict)
+    latency: Optional[LatencyBreakdown] = None
 
     @model_validator(mode="after")
     def exactly_one_outcome(self) -> "AnalysisResult":
@@ -367,6 +369,7 @@ class MessageAnalyzer:
                 agent_run_id=result.run_id,
                 profile_digest=result.profile_digest,
                 provider_metadata=result.provider_metadata.to_dict(),
+                latency=result.latency,
             )
         request = _decode_evidence_request(result.terminal_intent)
         return AnalysisResult(
@@ -380,4 +383,5 @@ class MessageAnalyzer:
             agent_run_id=result.run_id,
             profile_digest=result.profile_digest,
             provider_metadata=result.provider_metadata.to_dict(),
+            latency=result.latency,
         )

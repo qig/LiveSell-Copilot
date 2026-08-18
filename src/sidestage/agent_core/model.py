@@ -10,7 +10,7 @@ from typing import Any, Iterable, Literal, Mapping, Optional, Protocol, Tuple, U
 from urllib.parse import urlsplit
 
 import httpx
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 
 from sidestage.agent_core.contracts import (
     FrozenContract,
@@ -122,8 +122,9 @@ class OpenAICompatibleModelConfig(FrozenContract):
     request_timeout_s: PositiveFiniteFloat
     strict_function_tools: bool = False
     reasoning_effort: Optional[
-        Literal["none", "low", "medium", "high", "xhigh", "max"]
+        Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
     ] = None
+    service_tier: Optional[Literal["default", "priority"]] = None
     openrouter_routing: Optional["OpenRouterRoutingConfig"] = None
 
     @field_validator("base_url")
@@ -137,6 +138,12 @@ class OpenAICompatibleModelConfig(FrozenContract):
         if parsed.query or parsed.fragment:
             raise ValueError("base_url cannot contain a query or fragment")
         return value.rstrip("/")
+
+    @model_validator(mode="after")
+    def service_tier_is_direct_openai_only(self) -> "OpenAICompatibleModelConfig":
+        if self.openrouter_routing is not None and self.service_tier is not None:
+            raise ValueError("service_tier is only supported for direct OpenAI requests")
+        return self
 
 
 class OpenRouterRoutingConfig(FrozenContract):
@@ -214,9 +221,9 @@ class OpenAICompatibleModelRunner:
         # terminal call, so omitting the hint does not weaken the local contract.
         if self.config.openrouter_routing is None:
             request_payload["parallel_tool_calls"] = False
-        if self.config.reasoning_effort is not None:
-            request_payload["reasoning_effort"] = self.config.reasoning_effort
         if self.config.openrouter_routing is not None:
+            if self.config.reasoning_effort is not None:
+                request_payload["reasoning"] = {"effort": self.config.reasoning_effort}
             routing = self.config.openrouter_routing
             request_payload["provider"] = {
                 "allow_fallbacks": routing.allow_fallbacks,
@@ -224,6 +231,11 @@ class OpenAICompatibleModelRunner:
                 "sort": routing.sort,
                 "data_collection": routing.data_collection,
             }
+        else:
+            if self.config.reasoning_effort is not None:
+                request_payload["reasoning_effort"] = self.config.reasoning_effort
+            if self.config.service_tier is not None:
+                request_payload["service_tier"] = self.config.service_tier
         headers = {
             "Authorization": f"Bearer {self.config.api_key.get_secret_value()}",
             "Content-Type": "application/json",

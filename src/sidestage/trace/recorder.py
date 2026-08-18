@@ -8,7 +8,7 @@ import json
 from queue import Full, Queue
 from threading import Lock, Thread
 import time
-from typing import Annotated, Any, Callable, Optional, Protocol
+from typing import Annotated, Any, Callable, Literal, Optional, Protocol
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
@@ -78,6 +78,10 @@ class TraceObservation(BaseModel):
     agent_run_id: Optional[SafeRef] = None
     profile_digest: Optional[SafeRef] = None
     snapshot_id: Optional[SafeRef] = None
+    workflow_id: Optional[SafeRef] = None
+    model_profile_id: Optional[SafeRef] = None
+    selection_version: Optional[Annotated[int, Field(strict=True, gt=0)]] = None
+    sample_phase: Optional[Literal["cold", "steady"]] = None
     occurred_at: datetime
     duration_ms: Optional[
         Annotated[float, Field(strict=True, ge=0, allow_inf_nan=False)]
@@ -135,8 +139,9 @@ class SqliteTraceSink:
                        observation_id, trace_id, stage, stage_number, component_id,
                        status, seller_id, show_id, event_id, question_id,
                        analysis_call_id, agent_run_id, profile_digest, snapshot_id,
+                       workflow_id, model_profile_id, selection_version, sample_phase,
                        occurred_at, duration_ms, input_ref, output_ref, verdict, reason_code
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     observation.observation_id,
                     observation.trace_id,
@@ -152,6 +157,10 @@ class SqliteTraceSink:
                     observation.agent_run_id,
                     observation.profile_digest,
                     observation.snapshot_id,
+                    observation.workflow_id,
+                    observation.model_profile_id,
+                    observation.selection_version,
+                    observation.sample_phase,
                     _utc_text(observation.occurred_at),
                     observation.duration_ms,
                     observation.input_ref,
@@ -184,6 +193,14 @@ class SqliteTraceSink:
                 agent_run_id=row["agent_run_id"],
                 profile_digest=row["profile_digest"],
                 snapshot_id=row["snapshot_id"],
+                workflow_id=row["workflow_id"],
+                model_profile_id=row["model_profile_id"],
+                selection_version=(
+                    int(row["selection_version"])
+                    if row["selection_version"] is not None
+                    else None
+                ),
+                sample_phase=row["sample_phase"],
                 occurred_at=datetime.fromisoformat(row["occurred_at"].replace("Z", "+00:00")),
                 duration_ms=float(row["duration_ms"])
                 if row["duration_ms"] is not None
@@ -406,6 +423,10 @@ class TraceRecorder:
                 agent_run_id=context.get("agent_run_id"),
                 profile_digest=context.get("profile_digest"),
                 snapshot_id=context.get("snapshot_id"),
+                workflow_id=context.get("workflow_id"),
+                model_profile_id=context.get("model_profile_id"),
+                selection_version=context.get("selection_version"),
+                sample_phase=context.get("sample_phase"),
                 occurred_at=self.wall_clock(),
                 duration_ms=duration_ms,
                 input_ref=context.get("input_ref"),

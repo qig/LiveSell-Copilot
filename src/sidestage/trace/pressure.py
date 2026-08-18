@@ -28,7 +28,7 @@ from sidestage.marketplace.service import PushRequest
 from sidestage.trace.recorder import TraceStage
 
 
-PRESSURE_EVALUATION_SCHEMA_VERSION = "sidestage.pressure_evaluation.v1"
+PRESSURE_EVALUATION_SCHEMA_VERSION = "sidestage.pressure_evaluation.v2"
 
 
 class PressureEvaluationError(RuntimeError):
@@ -51,6 +51,7 @@ class CountingModelRunner:
                 "expected_bucket",
                 "expected_route",
                 "expected_outcome",
+                "expected_semantic",
                 "canonical_event_id",
                 "oracle",
             }
@@ -215,8 +216,12 @@ class PressureScriptedRunner:
         if fact_type == "variant_availability":
             records = [item for item in evidence if item["fact_type"] == fact_type]
             if variants:
-                label = variants[0].casefold()
-                matching = [item for item in records if item["value"].casefold().startswith(label)]
+                label = variants[0]
+                matching = [
+                    item
+                    for item in records
+                    if _evidence_value_matches_variant(item["value"], label)
+                ]
                 if len(matching) != 1:
                     return _tool_response(
                         "needs_seller",
@@ -290,7 +295,7 @@ def evaluate_pressure(
         "scenario_digest": artifacts.manifest["input_digests"]["scenario"],
         "seed": artifacts.manifest["seed"],
         "profile_digest": report["model"]["profile_digest"],
-        "model_config_ref": artifacts.manifest["model_config_ref"],
+        "model_config_ref": report["model"]["model_config_ref"],
         "implementation_commit": artifacts.manifest["implementation_commit"],
         "worktree_dirty": artifacts.manifest["worktree_dirty"],
         "fixture_manifest": artifacts.manifest,
@@ -311,13 +316,14 @@ async def _evaluate_replay(
 ) -> dict[str, Any]:
     if time_scale < 0:
         raise PressureEvaluationError("time scale cannot be negative")
-    raw_runner, model_metadata = _model_runner(model_mode, replay.manifest["model_config_ref"])
+    config_ref = f"sidestage-pressure-{strategy}-v2"
+    raw_runner, model_metadata = _model_runner(model_mode, config_ref)
     runner = CountingModelRunner(raw_runner)
     app = create_app(
         database_path=database_path,
         prepared_seed=replay.seed,
         model_runner=runner,
-        model_config_ref=replay.manifest["model_config_ref"],
+        model_config_ref=config_ref,
         workflow_strategy=strategy,
     )
     authorities = {
@@ -459,6 +465,9 @@ def _pressure_report(
         receipt_rows = connection.execute(
             "SELECT reply_id FROM copilot_reply_receipts"
         ).fetchall()
+        artifact_rows = connection.execute(
+            "SELECT trace_id, artifact_kind, payload_json FROM copilot_trace_artifacts"
+        ).fetchall()
     actual_by_event = {row["event_id"]: row for row in question_rows}
     result_by_actual = {result.event_id: result for _, result in paired}
     source_by_actual = {result.event_id: source for source, result in paired}
@@ -468,7 +477,15 @@ def _pressure_report(
     bucket_reasons: dict[str, Counter] = defaultdict(Counter)
     answerable_total = 0
     answerable_supported = 0
+    answerable_semantically_correct = 0
     answerable_failures = []
+    semantic_failures = []
+    semantic_components = {
+        "category": {"total": 0, "passed": 0},
+        "evidence": {"total": 0, "passed": 0},
+        "variant": {"total": 0, "passed": 0},
+        "template": {"total": 0, "passed": 0},
+    }
     ambiguity_total = 0
     ambiguity_safe = 0
     injection_total = 0
@@ -476,6 +493,11 @@ def _pressure_report(
     duplicate_total = 0
     duplicate_grouped = 0
     outbound_question_ids = {row["question_id"] for row in outbound_rows}
+    suggestion_by_question = {
+        row["question_id"]: json.loads(row["evidence_snapshot_json"])
+        for row in suggestion_rows
+    }
+    answerable_actual_ids: set[str] = set()
     for actual_id, row in actual_by_event.items():
         source = source_by_actual[actual_id]
         oracle = oracle_by_id[source.event_id]
@@ -484,6 +506,7 @@ def _pressure_report(
         bucket_outcomes[bucket][row["state"] or row["route"]] += 1
         bucket_reasons[bucket][row["reason_code"]] += 1
         if bucket == "answerable_parent":
+            answerable_actual_ids.add(actual_id)
             answerable_total += 1
             supported = row["state"] in {"awaiting_review", "auto_answered"}
             answerable_supported += supported
@@ -495,6 +518,82 @@ def _pressure_report(
                         "raw_text": source.payload.raw_text,
                         "state": row["state"],
                         "reason_code": row["reason_code"],
+                    }
+                )
+            expected = oracle["expected_semantic"]
+            result = result_by_actual[actual_id]
+            decision = result.broker_decision
+            snapshot = suggestion_by_question.get(row["question_id"], {})
+            records_by_id = {
+                record["evidence_id"]: record for record in snapshot.get("records", [])
+            }
+            selected_records = (
+                [
+                    records_by_id[evidence_id]
+                    for evidence_id in decision.evidence_ids
+                    if evidence_id in records_by_id
+                ]
+                if decision is not None
+                else []
+            )
+            actual_category = (
+                decision.validated_category.value
+                if decision is not None and decision.validated_category is not None
+                else None
+            )
+            actual_template = (
+                decision.template_id.value
+                if decision is not None and decision.template_id is not None
+                else None
+            )
+            actual_fact_types = sorted(
+                {record["fact_type"] for record in selected_records}
+            )
+            expected_fact_types = sorted(expected["expected_fact_types"])
+            category_ok = actual_category == expected["answer_category"]
+            evidence_ok = bool(selected_records) and actual_fact_types == expected_fact_types
+            expected_variant = expected.get("variant_label")
+            variant_ok = expected_variant is None or (
+                bool(selected_records)
+                and any(
+                    _evidence_value_matches_variant(record["value"], expected_variant)
+                    for record in selected_records
+                )
+            )
+            template_applicable = strategy == "one_call_template"
+            template_ok = (
+                actual_template == expected["template_id"] if template_applicable else True
+            )
+            semantic_components["category"]["total"] += 1
+            semantic_components["category"]["passed"] += int(category_ok)
+            semantic_components["evidence"]["total"] += 1
+            semantic_components["evidence"]["passed"] += int(evidence_ok)
+            if expected_variant is not None:
+                semantic_components["variant"]["total"] += 1
+                semantic_components["variant"]["passed"] += int(variant_ok)
+            if template_applicable:
+                semantic_components["template"]["total"] += 1
+                semantic_components["template"]["passed"] += int(template_ok)
+            semantically_correct = (
+                supported and category_ok and evidence_ok and variant_ok and template_ok
+            )
+            answerable_semantically_correct += int(semantically_correct)
+            if not semantically_correct:
+                semantic_failures.append(
+                    {
+                        "source_event_id": source.event_id,
+                        "trace_id": row["trace_id"],
+                        "raw_text": source.payload.raw_text,
+                        "expected": expected,
+                        "actual": {
+                            "state": row["state"],
+                            "answer_category": actual_category,
+                            "template_id": actual_template,
+                            "fact_types": actual_fact_types,
+                            "evidence_values": [
+                                record["value"] for record in selected_records
+                            ],
+                        },
                     }
                 )
         elif bucket == "ambiguous_or_unsupported":
@@ -525,16 +624,42 @@ def _pressure_report(
                 }
             )
     trace_summary = _trace_completeness(trace_rows)
-    latencies = [
-        result.latency for result in result_by_actual.values() if result.latency is not None
-    ]
+    all_results = list(result_by_actual.values())
+    model_backed_trace_ids = {
+        row["trace_id"]
+        for row in artifact_rows
+        if row["artifact_kind"] in {"analysis_result", "agent_run_result"}
+    }
+    denominator_results = {
+        "all_events": all_results,
+        "answerable_parent": [
+            result for actual_id, result in result_by_actual.items()
+            if actual_id in answerable_actual_ids
+        ],
+        "model_backed": [
+            result for result in all_results if result.trace_id in model_backed_trace_ids
+        ],
+        "r2_published": [
+            result
+            for result in all_results
+            if result.latency is not None and result.latency.boundary == "r2_inbox_sse"
+        ],
+        "r3_committed": [
+            result
+            for result in all_results
+            if result.latency is not None and result.latency.boundary == "r3_reply_commit_sse"
+        ],
+    }
+    latency_denominators = {
+        name: _latency_slice(results) for name, results in denominator_results.items()
+    }
     latency_metrics = {
-        "queue_ms": _distribution([item.queue_ms for item in latencies]),
-        "total_ms": _distribution([item.total_ms for item in latencies]),
+        **latency_denominators["all_events"],
         "slo_target_ms": 2_000,
         "hard_timeout_ms": 5_000,
-        "slo_miss_count": sum(item.slo_missed for item in latencies),
-        "hard_timeout_count": sum(item.hard_timeout_outcome for item in latencies),
+        "reported_denominator": "all_events",
+        "release_slo_denominator": "answerable_parent",
+        "denominators": latency_denominators,
     }
     stage_metrics = {}
     for stage in TraceStage:
@@ -592,6 +717,16 @@ def _pressure_report(
             "rate": answerable_supported / answerable_total if answerable_total else 0.0,
             "minimum_rate": 0.95,
         },
+        "answerable_semantically_correct": {
+            "total": answerable_total,
+            "passed": answerable_semantically_correct,
+            "rate": (
+                answerable_semantically_correct / answerable_total
+                if answerable_total
+                else 0.0
+            ),
+            "minimum_rate": 0.95,
+        },
         "ambiguous_or_unsupported_safe": {
             "total": ambiguity_total,
             "passed": ambiguity_safe,
@@ -614,7 +749,15 @@ def _pressure_report(
     scorecard_passed = all(
         item["rate"] >= item["minimum_rate"] for item in scorecard.values()
     )
-    total_p95 = latency_metrics["total_ms"]["p95"]
+    semantic_scorecard = {
+        name: {
+            "applicable": name != "template" or strategy == "one_call_template",
+            **values,
+            "rate": values["passed"] / values["total"] if values["total"] else None,
+        }
+        for name, values in semantic_components.items()
+    }
+    total_p95 = latency_denominators["answerable_parent"]["total_ms"]["p95"]
     slo_passed = total_p95 is not None and total_p95 < 2_000
     slo_applicable = model_metadata["mode"] == "live" and time_scale == 1.0
     return {
@@ -643,8 +786,10 @@ def _pressure_report(
             for bucket, counts in sorted(bucket_reasons.items())
         },
         "scorecard": scorecard,
+        "semantic_scorecard": semantic_scorecard,
         "scorecard_passed": scorecard_passed,
         "answerable_failures": answerable_failures,
+        "semantic_failures": semantic_failures,
         "route_mismatches": route_mismatches,
         "latency": latency_metrics,
         "stage_latency": stage_metrics,
@@ -693,6 +838,7 @@ def _model_runner(model_mode: str, config_ref: str):
     model_id = os.environ.get("SIDESTAGE_MODEL_ID")
     base_url = os.environ.get("SIDESTAGE_MODEL_BASE_URL", default_base_url)
     reasoning_effort = os.environ.get("SIDESTAGE_MODEL_REASONING_EFFORT", "none")
+    service_tier = os.environ.get("SIDESTAGE_MODEL_SERVICE_TIER")
     if not api_key or not model_id:
         raise PressureEvaluationError(
             f"live {provider} pressure requires its matching API key and SIDESTAGE_MODEL_ID"
@@ -706,6 +852,7 @@ def _model_runner(model_mode: str, config_ref: str):
             request_timeout_s=5.0,
             strict_function_tools=True,
             reasoning_effort=reasoning_effort,
+            service_tier=service_tier,
             openrouter_routing=routing,
         )
     )
@@ -716,6 +863,7 @@ def _model_runner(model_mode: str, config_ref: str):
         "model_config_ref": config_ref,
         "base_url": base_url,
         "reasoning_effort": reasoning_effort,
+        "service_tier": service_tier,
         "request_timeout_s": 5.0,
         "strict_function_tools": True,
         "openrouter_routing": (
@@ -740,6 +888,13 @@ def _analysis_payload(
         "required_fact_types": [fact_type] if fact_type else [],
         "query_terms": list(query_terms),
     }
+
+
+def _evidence_value_matches_variant(value: str, expected_label: str) -> bool:
+    """Match the controlled variant label, excluding the availability suffix."""
+
+    actual_label, _separator, _availability = value.partition(":")
+    return actual_label.strip().casefold() == expected_label.strip().casefold()
 
 
 def _fact_plan(question: str) -> tuple[str, str, tuple[str, ...], tuple[str, ...]]:
@@ -808,6 +963,16 @@ def _trace_completeness(rows) -> dict:
             if any(row["stage"] != expected[number] for row in stage_rows):
                 drift += 1
     return {"trace_count": len(grouped), "incomplete_count": incomplete, "stage_drift_count": drift}
+
+
+def _latency_slice(results) -> dict[str, Any]:
+    latencies = [result.latency for result in results if result.latency is not None]
+    return {
+        "queue_ms": _distribution([item.queue_ms for item in latencies]),
+        "total_ms": _distribution([item.total_ms for item in latencies]),
+        "slo_miss_count": sum(item.slo_missed for item in latencies),
+        "hard_timeout_count": sum(item.hard_timeout_outcome for item in latencies),
+    }
 
 
 def _distribution(values: list[float]) -> dict:

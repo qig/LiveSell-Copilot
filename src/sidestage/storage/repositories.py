@@ -95,6 +95,13 @@ CREATE TABLE IF NOT EXISTS chat_events (
     trace_id TEXT NOT NULL UNIQUE,
     source_epoch_id TEXT,
     source_listing_id TEXT,
+    workflow_id TEXT,
+    model_profile_id TEXT,
+    requested_model_id TEXT,
+    model_config_ref TEXT,
+    model_provider TEXT,
+    selection_version INTEGER,
+    selection_selected_at TEXT,
     UNIQUE (show_id, show_seq)
 );
 CREATE TABLE IF NOT EXISTS stream_events (
@@ -126,6 +133,16 @@ CREATE TABLE IF NOT EXISTS copilot_questions (
     bound_sku TEXT,
     binding_basis TEXT,
     binding_status TEXT,
+    workflow_id TEXT,
+    model_profile_id TEXT,
+    requested_model_id TEXT,
+    model_config_ref TEXT,
+    model_provider TEXT,
+    selection_version INTEGER,
+    selection_selected_at TEXT,
+    sample_phase TEXT,
+    resolved_model_id TEXT,
+    resolved_provider TEXT,
     asked_at TEXT NOT NULL,
     state_changed_at TEXT NOT NULL
 );
@@ -182,6 +199,10 @@ CREATE TABLE IF NOT EXISTS copilot_trace_observations (
     agent_run_id TEXT,
     profile_digest TEXT,
     snapshot_id TEXT,
+    workflow_id TEXT,
+    model_profile_id TEXT,
+    selection_version INTEGER,
+    sample_phase TEXT,
     occurred_at TEXT NOT NULL,
     duration_ms REAL,
     input_ref TEXT,
@@ -260,6 +281,15 @@ CREATE TABLE IF NOT EXISTS copilot_reply_receipts (
     guardrail_verdict TEXT NOT NULL,
     authorization_version INTEGER,
     validated_versions_json TEXT NOT NULL DEFAULT '{}',
+    workflow_id TEXT,
+    model_profile_id TEXT,
+    requested_model_id TEXT,
+    model_config_ref TEXT,
+    model_provider TEXT,
+    selection_version INTEGER,
+    sample_phase TEXT,
+    resolved_model_id TEXT,
+    resolved_provider TEXT,
     warnings_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
@@ -288,6 +318,49 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
         "validated_versions_json",
         "TEXT NOT NULL DEFAULT '{}'",
     )
+    runtime_columns = {
+        "chat_events": (
+            ("workflow_id", "TEXT"),
+            ("model_profile_id", "TEXT"),
+            ("requested_model_id", "TEXT"),
+            ("model_config_ref", "TEXT"),
+            ("model_provider", "TEXT"),
+            ("selection_version", "INTEGER"),
+            ("selection_selected_at", "TEXT"),
+        ),
+        "copilot_questions": (
+            ("workflow_id", "TEXT"),
+            ("model_profile_id", "TEXT"),
+            ("requested_model_id", "TEXT"),
+            ("model_config_ref", "TEXT"),
+            ("model_provider", "TEXT"),
+            ("selection_version", "INTEGER"),
+            ("selection_selected_at", "TEXT"),
+            ("sample_phase", "TEXT"),
+            ("resolved_model_id", "TEXT"),
+            ("resolved_provider", "TEXT"),
+        ),
+        "copilot_trace_observations": (
+            ("workflow_id", "TEXT"),
+            ("model_profile_id", "TEXT"),
+            ("selection_version", "INTEGER"),
+            ("sample_phase", "TEXT"),
+        ),
+        "copilot_reply_receipts": (
+            ("workflow_id", "TEXT"),
+            ("model_profile_id", "TEXT"),
+            ("requested_model_id", "TEXT"),
+            ("model_config_ref", "TEXT"),
+            ("model_provider", "TEXT"),
+            ("selection_version", "INTEGER"),
+            ("sample_phase", "TEXT"),
+            ("resolved_model_id", "TEXT"),
+            ("resolved_provider", "TEXT"),
+        ),
+    }
+    for table, columns in runtime_columns.items():
+        for column, definition in columns:
+            _ensure_column(connection, table, column, definition)
 
 
 def seed_catalog(connection: sqlite3.Connection, catalog: SellerCatalog) -> None:

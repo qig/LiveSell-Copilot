@@ -16,7 +16,7 @@ Open [http://127.0.0.1:8000/app/](http://127.0.0.1:8000/app/). The debugger ledg
 
 The browser holds only an opaque demo-session token. SQLite is authoritative for show, chat, listing, inventory, epoch, question, trace, reply, and receipt state; Server-Sent Events keep multiple projections synchronized. The current application includes the M3B Copilot Inbox, R2 review controls, bounded R3 controls, and the persisted eight-stage debugger.
 
-The `create_app` Uvicorn factory deliberately starts with a fail-closed empty scripted model runner unless a runner is injected by a test or harness. This makes the UI and marketplace safe to inspect without credentials.
+The `create_app` Uvicorn factory deliberately starts with a fail-closed empty scripted model runner unless a runner is injected by a test or harness. It still registers both closed workflows, which makes the UI, marketplace, and runtime selector safe to inspect without credentials.
 
 For the live-model prototype, keep one `KEY=value` per line in the ignored `.env`. A direct OpenAI configuration can be:
 
@@ -25,7 +25,9 @@ OPENAI_API_KEY=your-openai-key
 SIDESTAGE_MODEL_PROVIDER=openai
 SIDESTAGE_MODEL_ID=gpt-5.6-luna
 SIDESTAGE_MODEL_REASONING_EFFORT=none
-SIDESTAGE_WORKFLOW_STRATEGY=two_call_draft
+# Optional direct-OpenAI scheduling tier; omit for standard service.
+# SIDESTAGE_MODEL_SERVICE_TIER=priority
+SIDESTAGE_WORKFLOW_STRATEGY=one_call_template
 ```
 
 Environment variable names are exact: `OPEN_API_KEY` is not read. Use `OPENAI_API_KEY` or the provider-scoped override `SIDESTAGE_MODEL_API_KEY` for direct OpenAI.
@@ -39,6 +41,19 @@ SIDESTAGE_MODEL_ID=provider/exact-model-slug
 SIDESTAGE_MODEL_REASONING_EFFORT=none
 SIDESTAGE_WORKFLOW_STRATEGY=one_call_template
 ```
+
+To expose the approved multi-model catalog in the debugger, keep both provider keys in the same `.env` while retaining one startup default:
+
+```bash
+OPENAI_API_KEY=your-openai-key
+OPENROUTER_API_KEY=your-openrouter-key
+SIDESTAGE_MODEL_PROVIDER=openai
+SIDESTAGE_MODEL_ID=gpt-5.6-luna
+SIDESTAGE_MODEL_REASONING_EFFORT=none
+SIDESTAGE_WORKFLOW_STRATEGY=one_call_template
+```
+
+With both keys present, `create_live_app` loads [`config/runtime_model_profiles.json`](config/runtime_model_profiles.json). The debugger can switch new chat among startup-approved compatible pairs without a restart. The catalog distinguishes Luna `none`, Luna `low`, and direct-OpenAI Luna `none` with `service_tier=priority`; it also includes OpenRouter Gemini 3.7 Flash `low` and Gemini 3.5 Flash-Lite `minimal`. DeepSeek V4 Flash and Kimi K3 remain enabled for one-call comparison; GLM 5.2 remains visible but disabled because it failed strict tool compatibility. OpenAI priority service and reasoning effort are independent settings. OpenRouter profiles send reasoning through its unified `reasoning.effort` request field and never use OpenAI's service tier. The seller workspace shows the exact active profile display name and selection version read-only, so Luna reasoning/service variants remain distinguishable after a debugger switch. The UI never accepts model IDs, base URLs, credentials, prompts, tools, or templates.
 
 Then run `uv run --env-file .env uvicorn sidestage.app:create_live_app --factory --host 127.0.0.1 --port 8000`. `create_live_app` requires the key matching the selected provider, uses strict function schemas, and exits before database initialization on a missing or mismatched key, model, provider, or strategy. OpenRouter requests disable fallbacks, require parameter support, sort by latency for screening, and opt into router metadata. Credentials never enter application state, model-visible input, or trace metadata.
 
@@ -86,4 +101,4 @@ uv run pytest \
   -m live_model -q
 ```
 
-No current live cell passes the release gate. On pre-commit direct OpenAI runs, `one_call_template` improved to 66/72 supported answerable suggestions, zero hard timeouts, and 3,414.37 ms end-to-end workload p95, compared with 54/72, 14 hard timeouts, and 4,530.28 ms for `two_call_draft`. Fallback-disabled OpenRouter pressure runs reached 7/72 and 5,022.01 ms p95 for DeepSeek V4 Flash/Inceptron and 17/72 and 5,024.85 ms for Kimi K3/Together; GLM 5.2 failed the strict compatibility smoke and was not pressure-tested. Safety/no-effect scorecards remained intact, but quality and latency did not. These remain pre-commit implementation diagnostics, not `Measured` evidence. The committed deterministic suite passes at code head `6ba208a`; the eight debugger stages are persisted backend observations from the real hardcoded reply path, and the frontend does not synthesize reply-stage success.
+No current live cell passes the release gate. Legacy pre-commit direct OpenAI artifacts report `one_call_template` at 66/72 broker-accepted suggestions and 3,414.37 ms all-event workload p95, compared with 54/72 and 4,530.28 ms for `two_call_draft`; those artifacts predate semantic scoring and denominator separation, so they are not answer-correctness or final product-SLO measurements. The current evaluator adds explicit expected category/evidence/template labels for all 72 answerable cases, a semantic-correctness gate, and separate all-event, answerable-parent, model-backed, R2, and R3 latency denominators. It uses answerable-parent p95 for the release SLO and keeps the workload manifest independent of evaluation profile. New live matrix runs are still required. All prior live results remain pre-commit implementation diagnostics, not `Measured` evidence; M3B.5 remains `Implemented` until commit-bound verification.

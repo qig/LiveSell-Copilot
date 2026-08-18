@@ -11,6 +11,7 @@
   ];
   const dom = {};
   let runtimeProjection = null;
+  let runtimeConfig = null;
   let activeTrace = null;
   let activeStageNumber = 1;
   let marketplaceEventSource = null;
@@ -21,7 +22,7 @@
     cacheDom();
     bindEvents();
     initializeImportTrace();
-    await Promise.all([renderRuntimeTraces(), renderMarketplace()]);
+    await Promise.all([renderRuntimeConfig(), renderRuntimeTraces(), renderMarketplace()]);
     connectMarketplaceEvents();
   }
 
@@ -77,11 +78,23 @@
       importSource: document.querySelector("#import-trace-source"),
       importDigest: document.querySelector("#import-trace-digest"),
       importPayload: document.querySelector("#import-trace-payload"),
+      runtimeForm: document.querySelector("#runtime-form"),
+      runtimeWorkflow: document.querySelector("#runtime-workflow"),
+      runtimeModel: document.querySelector("#runtime-model"),
+      runtimeApply: document.querySelector("#runtime-apply"),
+      runtimeActiveVersion: document.querySelector("#runtime-active-version"),
+      runtimeNextPhase: document.querySelector("#runtime-next-phase"),
+      runtimeActiveWorkflow: document.querySelector("#runtime-active-workflow"),
+      runtimeActiveModel: document.querySelector("#runtime-active-model"),
+      runtimeActiveProfile: document.querySelector("#runtime-active-profile"),
+      runtimeActiveProvider: document.querySelector("#runtime-active-provider"),
+      runtimeStatus: document.querySelector("#runtime-status"),
+      runtimeMetricsTable: document.querySelector("#runtime-metrics-table"),
     });
   }
 
   function bindEvents() {
-    dom.refresh.addEventListener("click", () => Promise.all([renderRuntimeTraces(), renderMarketplace()]));
+    dom.refresh.addEventListener("click", () => Promise.all([renderRuntimeConfig(), renderRuntimeTraces(), renderMarketplace()]));
     dom.traceRun.addEventListener("click", renderRuntimeTraces);
     dom.traceReset.addEventListener("click", () => {
       dom.traceScenario.value = "all";
@@ -94,6 +107,9 @@
       renderTrace();
     });
     dom.importRun.addEventListener("click", runImportTrace);
+    dom.runtimeForm.addEventListener("submit", applyRuntimeSelection);
+    dom.runtimeWorkflow.addEventListener("change", () => syncRuntimeCompatibility("workflow"));
+    dom.runtimeModel.addEventListener("change", () => syncRuntimeCompatibility("model"));
     document.querySelectorAll("[data-ledger-tab]").forEach((tab) => {
       tab.addEventListener("click", () => activateTab(tab.dataset.ledgerTab));
     });
@@ -102,12 +118,158 @@
 
   async function fetchJson(url, options = {}) {
     const response = await fetch(url, {...options, cache: "no-store"});
-    if (!response.ok) throw new Error(`Unable to load runtime data (${response.status})`);
-    return response.json();
+    const payload = response.headers.get("content-type")?.includes("application/json")
+      ? await response.json()
+      : null;
+    if (!response.ok) {
+      const detail = payload?.detail;
+      const message = typeof detail === "object" ? detail.message : detail;
+      throw new Error(message || `Unable to load runtime data (${response.status})`);
+    }
+    return payload;
   }
 
   function sessionToken() {
     return sessionStorage.getItem(SESSION_KEY);
+  }
+
+  async function renderRuntimeConfig() {
+    const token = sessionToken();
+    if (!token) {
+      renderRuntimeConfigEmpty("Open the seller workspace first to select a runtime configuration.");
+      return;
+    }
+    try {
+      runtimeConfig = await fetchJson(
+        `/api/debug/runtime?session_token=${encodeURIComponent(token)}`,
+      );
+      const active = runtimeConfig.active_selection;
+      dom.runtimeWorkflow.innerHTML = runtimeConfig.workflows
+        .map((workflow) => `<option value="${escapeHtml(workflow.workflow_id)}">${escapeHtml(workflow.display_name)} · ${workflow.provider_call_count} call${workflow.provider_call_count === 1 ? "" : "s"}</option>`)
+        .join("");
+      dom.runtimeModel.innerHTML = runtimeConfig.models
+        .map((model) => `<option value="${escapeHtml(model.profile_id)}" ${model.enabled ? "" : "disabled"}>${escapeHtml(model.display_name)}${model.enabled ? "" : ` · disabled (${escapeHtml(model.disabled_reason)})`}</option>`)
+        .join("");
+      dom.runtimeWorkflow.value = active.workflow_id;
+      dom.runtimeModel.value = active.model_profile_id;
+      dom.runtimeWorkflow.disabled = false;
+      dom.runtimeModel.disabled = false;
+      syncRuntimeCompatibility("active");
+      renderRuntimeSummary();
+      renderRuntimeMetrics();
+    } catch (error) {
+      renderRuntimeConfigEmpty(error.message);
+    }
+  }
+
+  function syncRuntimeCompatibility(source) {
+    if (!runtimeConfig) return;
+    if (source === "model") {
+      const model = runtimeConfig.models.find((item) => item.profile_id === dom.runtimeModel.value);
+      [...dom.runtimeWorkflow.options].forEach((option) => {
+        option.disabled = !model?.supported_workflows.includes(option.value);
+      });
+      if (dom.runtimeWorkflow.selectedOptions[0]?.disabled) {
+        dom.runtimeWorkflow.value = model?.supported_workflows[0] || "";
+      }
+    }
+    const workflowId = dom.runtimeWorkflow.value;
+    [...dom.runtimeModel.options].forEach((option) => {
+      const model = runtimeConfig.models.find((item) => item.profile_id === option.value);
+      option.disabled = !model?.enabled || !model.supported_workflows.includes(workflowId);
+    });
+    if (dom.runtimeModel.selectedOptions[0]?.disabled) {
+      const compatible = runtimeConfig.models.find(
+        (model) => model.enabled && model.supported_workflows.includes(workflowId),
+      );
+      dom.runtimeModel.value = compatible?.profile_id || "";
+    }
+    const active = runtimeConfig.active_selection;
+    dom.runtimeApply.disabled = !dom.runtimeWorkflow.value
+      || !dom.runtimeModel.value
+      || (dom.runtimeWorkflow.value === active.workflow_id
+        && dom.runtimeModel.value === active.model_profile_id);
+  }
+
+  async function applyRuntimeSelection(event) {
+    event.preventDefault();
+    const token = sessionToken();
+    if (!token || !runtimeConfig) return;
+    dom.runtimeApply.disabled = true;
+    dom.runtimeStatus.textContent = "Applying the next per-show selection version…";
+    try {
+      const response = await fetchJson(
+        `/api/debug/runtime?session_token=${encodeURIComponent(token)}`,
+        {
+          method: "PUT",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            workflow_id: dom.runtimeWorkflow.value,
+            model_profile_id: dom.runtimeModel.value,
+            expected_selection_version: runtimeConfig.active_selection.selection_version,
+          }),
+        },
+      );
+      runtimeConfig.active_selection = response.active_selection;
+      runtimeConfig.next_sample_phase = response.next_sample_phase;
+      renderRuntimeSummary();
+      syncRuntimeCompatibility("active");
+      dom.runtimeStatus.textContent = `Selection v${response.active_selection.selection_version} is active for newly accepted chat. In-flight work is unchanged.`;
+      await Promise.all([renderRuntimeConfig(), renderRuntimeTraces(), renderMarketplace()]);
+    } catch (error) {
+      dom.runtimeStatus.textContent = error.message;
+      await renderRuntimeConfig();
+    }
+  }
+
+  function renderRuntimeSummary() {
+    const active = runtimeConfig.active_selection;
+    dom.runtimeActiveVersion.textContent = `v${active.selection_version}`;
+    dom.runtimeNextPhase.textContent = `Next · ${runtimeConfig.next_sample_phase}`;
+    dom.runtimeActiveWorkflow.textContent = active.workflow_id;
+    dom.runtimeActiveModel.textContent = active.requested_model_id;
+    dom.runtimeActiveProfile.textContent = active.model_profile_id;
+    dom.runtimeActiveProvider.textContent = active.provider;
+    dom.runtimeStatus.textContent = `Version ${active.selection_version} is pinned only when a new chat event is accepted.`;
+  }
+
+  function renderRuntimeMetrics() {
+    const groups = runtimeConfig?.latency?.groups || [];
+    if (!groups.length) {
+      dom.runtimeMetricsTable.innerHTML = "<p>No model-backed samples yet. Noise and duplicate exits do not consume the cold marker.</p>";
+      return;
+    }
+    dom.runtimeMetricsTable.innerHTML = `<table>
+      <thead><tr><th>Workflow / model</th><th>Samples</th><th>Cold</th><th>Steady p50</th><th>Steady p95</th><th>Combined p95</th><th>SLO misses</th><th>Timeouts</th></tr></thead>
+      <tbody>${groups.map((group) => `<tr>
+        <td><strong>${escapeHtml(humanize(group.workflow_id))}</strong><br>${escapeHtml(group.model_profile_id)}</td>
+        <td>${group.combined.count}</td>
+        <td>${formatLatency(group.cold.samples[0]?.total_ms)}</td>
+        <td>${formatLatency(group.steady.p50_ms)}</td>
+        <td>${formatLatency(group.steady.p95_ms)}</td>
+        <td>${formatLatency(group.combined.p95_ms)}</td>
+        <td>${group.combined.slo_misses}</td>
+        <td>${group.combined.hard_timeouts}</td>
+      </tr>`).join("")}</tbody>
+    </table>`;
+  }
+
+  function renderRuntimeConfigEmpty(message) {
+    runtimeConfig = null;
+    dom.runtimeWorkflow.innerHTML = "<option>Runtime unavailable</option>";
+    dom.runtimeModel.innerHTML = "<option>Runtime unavailable</option>";
+    dom.runtimeWorkflow.disabled = true;
+    dom.runtimeModel.disabled = true;
+    dom.runtimeApply.disabled = true;
+    dom.runtimeActiveVersion.textContent = "v—";
+    dom.runtimeNextPhase.textContent = "Next · —";
+    [dom.runtimeActiveWorkflow, dom.runtimeActiveModel, dom.runtimeActiveProfile, dom.runtimeActiveProvider].forEach((item) => { item.textContent = "—"; });
+    dom.runtimeStatus.textContent = message;
+    dom.runtimeMetricsTable.innerHTML = "<p>No runtime comparison is available.</p>";
+  }
+
+  function formatLatency(value) {
+    return value === null || value === undefined ? "—" : `${Number(value).toFixed(1)} ms`;
   }
 
   async function renderRuntimeTraces() {
@@ -215,10 +377,12 @@
     dom.traceEventCustomer.textContent = activeTrace.customer_display_name;
     dom.traceEventTitle.textContent = `Question #${activeTrace.show_seq} · ${humanize(activeTrace.state || activeTrace.actual_route)}`;
     dom.traceEventText.textContent = activeTrace.raw_text;
+    const runtime = activeTrace.runtime_selection || {};
     dom.traceEventMeta.innerHTML = `
       <div><dt>Trace</dt><dd><code>${escapeHtml(activeTrace.trace_id)}</code></dd></div>
       <div><dt>Actual route</dt><dd>${escapeHtml(activeTrace.actual_route)}</dd></div>
-      <div><dt>Expected oracle</dt><dd>${escapeHtml(activeTrace.expected_route || "custom / no oracle")}</dd></div>`;
+      <div><dt>Expected oracle</dt><dd>${escapeHtml(activeTrace.expected_route || "custom / no oracle")}</dd></div>
+      <div><dt>Pinned runtime</dt><dd>${escapeHtml(runtime.workflow_id || "—")} · ${escapeHtml(runtime.model_profile_id || "—")} · v${escapeHtml(runtime.selection_version || "—")} · ${escapeHtml(runtime.sample_phase || "no model call")}</dd></div>`;
   }
 
   function renderStageRail() {
@@ -276,6 +440,10 @@
       snapshot_id: stage.snapshot_id,
       agent_run_id: stage.agent_run_id,
       profile_digest: stage.profile_digest,
+      workflow_id: stage.workflow_id,
+      model_profile_id: stage.model_profile_id,
+      selection_version: stage.selection_version,
+      sample_phase: stage.sample_phase,
     });
     dom.traceStageOutput.textContent = prettyJson(stage.artifacts);
   }
@@ -384,8 +552,8 @@
     const token = sessionToken();
     if (!token) return;
     marketplaceEventSource = new EventSource(`/api/sessions/${encodeURIComponent(token)}/events`);
-    ["chat.accepted", "chat.reply", "marketplace.changed", "copilot.question.changed", "copilot.r3.changed"].forEach((type) => {
-      marketplaceEventSource.addEventListener(type, () => Promise.all([renderRuntimeTraces(), renderMarketplace()]));
+    ["chat.accepted", "chat.reply", "marketplace.changed", "copilot.question.changed", "copilot.r3.changed", "copilot.runtime.changed"].forEach((type) => {
+      marketplaceEventSource.addEventListener(type, () => Promise.all([renderRuntimeConfig(), renderRuntimeTraces(), renderMarketplace()]));
     });
   }
 

@@ -134,7 +134,27 @@ def test_non_ai_marketplace_flow_is_server_owned_and_reconnectable(
                 _format_money(product["listing"]["price_cents"])
             )
 
+    page.evaluate(
+        """() => {
+          const realFetch = window.fetch.bind(window);
+          window.fetch = (...args) => {
+            if (args[0] !== "/api/demo/sessions") return realFetch(...args);
+            window.fetch = realFetch;
+            return new Promise((resolve, reject) => {
+              window.__releaseSellerSwitch = () => realFetch(...args).then(resolve, reject);
+            });
+          };
+        }"""
+    )
     page.locator("#seller-select").select_option("sel_velocity_kicks")
+    expect(page.locator("#seller-select")).to_be_disabled()
+    expect(page.locator("#workspace")).to_have_attribute("aria-busy", "true")
+    assert page.locator("#workspace").evaluate("(node) => node.inert") is True
+    page.evaluate("window.__releaseSellerSwitch()")
+    expect(page.locator("#show-id")).to_have_text("show_velocity_kicks")
+    expect(page.locator("#seller-select")).to_be_enabled()
+    expect(page.locator("#workspace")).to_have_attribute("aria-busy", "false")
+    assert page.locator("#workspace").evaluate("(node) => node.inert") is False
     expect(page.locator('[data-operation="push"]')).to_be_enabled()
     expect(page.locator('[data-operation="swap"]')).to_be_disabled()
 

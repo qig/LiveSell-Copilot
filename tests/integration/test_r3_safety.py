@@ -184,6 +184,10 @@ def test_enabled_r3_renders_price_from_fact_and_commits_one_atomic_receipt(
     assert receipt["authorization_version"] == 2
     assert receipt["guardrail_verdict"] == "r3_final_revalidated"
     assert receipt["validated_versions"]["listing_version"] == 1
+    assert receipt["runtime_selection"]["workflow_id"] == "two_call_draft"
+    assert receipt["runtime_selection"]["model_profile_id"] == "sidestage-model-v1"
+    assert receipt["runtime_selection"]["selection_version"] == 1
+    assert receipt["runtime_selection"]["sample_phase"] == "cold"
     with app.state.database.read() as connection:
         transitions = connection.execute(
             """SELECT from_state, to_state FROM copilot_question_transitions

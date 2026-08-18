@@ -14,16 +14,14 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from sidestage.agent_core import register_profile
 from sidestage.config import REPOSITORY_ROOT
-from sidestage.copilot.profile import build_livesell_reply_profile
 from sidestage.copilot.routing import canonicalize_question
 
 
-GENERATOR_VERSION = "1.0.0"
+GENERATOR_VERSION = "1.1.0"
 EVENT_SCHEMA_VERSION = "sidestage.livesell_event.v1"
-MANIFEST_SCHEMA_VERSION = "sidestage.livesell_manifest.v1"
-ORACLE_SCHEMA_VERSION = "sidestage.livesell_oracle.v1"
+MANIFEST_SCHEMA_VERSION = "sidestage.livesell_manifest.v2"
+ORACLE_SCHEMA_VERSION = "sidestage.livesell_oracle.v2"
 
 
 class GenerationError(ValueError):
@@ -68,7 +66,6 @@ class PressureScenario(FrozenGenerationModel):
     burst_window: BurstWindow
     per_seller_quotas: PressureQuotas
     scenario_capabilities: Tuple[str, ...] = ()
-    model_config_ref: str
 
     @model_validator(mode="after")
     def approved_shape(self) -> "PressureScenario":
@@ -121,6 +118,59 @@ class RuntimeChatEvent(FrozenGenerationModel):
     payload: RuntimeChatPayload
 
 
+class ExpectedSemanticAnswer(FrozenGenerationModel):
+    template_id: Literal[
+        "reply_current_price",
+        "reply_shipping_policy",
+        "reply_returns_policy",
+        "reply_payment_policy",
+        "reply_release_date",
+        "reply_msrp",
+        "reply_materials",
+        "reply_sizing_guidance",
+        "reply_authenticity",
+        "reply_condition",
+        "reply_exact_variant_availability",
+    ]
+    answer_category: Literal[
+        "price",
+        "availability",
+        "shipping",
+        "payment",
+        "returns",
+        "condition",
+        "authenticity",
+        "sizing",
+        "product_research",
+    ]
+    expected_fact_types: Tuple[
+        Literal[
+            "current_price",
+            "variant_availability",
+            "shipping_policy",
+            "payment_policy",
+            "returns_policy",
+            "condition",
+            "authenticity",
+            "sizing",
+            "release_date",
+            "msrp",
+            "materials",
+        ],
+        ...,
+    ] = Field(min_length=1)
+    variant_label: Optional[str] = Field(default=None, min_length=1, max_length=40)
+
+    @model_validator(mode="after")
+    def variant_contract_is_consistent(self) -> "ExpectedSemanticAnswer":
+        exact_variant = self.template_id == "reply_exact_variant_availability"
+        if exact_variant != (self.variant_label is not None):
+            raise ValueError("exact variant semantic contract requires one variant label")
+        if exact_variant and self.expected_fact_types != ("variant_availability",):
+            raise ValueError("exact variant semantic contract requires variant availability")
+        return self
+
+
 class OracleEvent(FrozenGenerationModel):
     event_id: str
     seller_id: str
@@ -139,6 +189,15 @@ class OracleEvent(FrozenGenerationModel):
         "adversarial",
     ]
     canonical_event_id: Optional[str] = None
+    expected_semantic: Optional[ExpectedSemanticAnswer] = None
+
+    @model_validator(mode="after")
+    def semantic_contract_matches_bucket(self) -> "OracleEvent":
+        if self.expected_bucket == "answerable_parent" and self.expected_semantic is None:
+            raise ValueError("answerable parent requires expected semantic answer")
+        if self.expected_bucket != "answerable_parent" and self.expected_semantic is not None:
+            raise ValueError("only answerable parents may carry expected semantic answers")
+        return self
 
 
 class GeneratedArtifacts(FrozenGenerationModel):
@@ -282,9 +341,6 @@ def generate_pressure(
     }
     oracle_bytes = (_canonical_json(oracle_payload) + "\n").encode("utf-8")
     commit, dirty = _git_metadata()
-    profile = register_profile(
-        build_livesell_reply_profile(model_config_ref=scenario.model_config_ref)
-    )
     manifest = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "evaluation_scope": "sidestage_e2e",
@@ -306,8 +362,6 @@ def generate_pressure(
         },
         "events_digest": f"sha256:{sha256(event_lines.encode('utf-8')).hexdigest()}",
         "oracle_digest": f"sha256:{sha256(oracle_bytes).hexdigest()}",
-        "profile_digest": profile.digest,
-        "model_config_ref": scenario.model_config_ref,
         "implementation_commit": commit,
         "worktree_dirty": dirty,
     }
@@ -340,6 +394,16 @@ def _generate_seller(
         "mixed_greeting_question",
     }
     candidates: list[dict] = []
+    raw_contracts = chat_document.get("pressure_answer_contracts")
+    if not isinstance(raw_contracts, dict):
+        raise GenerationError("pressure semantic answer contracts are missing")
+    try:
+        contracts = {
+            key: ExpectedSemanticAnswer.model_validate(value, strict=False)
+            for key, value in raw_contracts.items()
+        }
+    except (TypeError, ValueError) as error:
+        raise GenerationError("pressure semantic answer contracts are invalid") from error
     for pool in applicable:
         if (
             pool["fixture_class"] not in answerable_classes
@@ -351,9 +415,19 @@ def _generate_seller(
             surfaces = pool.get("message_pairs", [])
         else:
             surfaces = [(message, None) for message in pool.get("messages", [])]
+        answer_keys = pool.get("pressure_answer_keys")
+        if not isinstance(answer_keys, list) or len(answer_keys) != len(surfaces):
+            raise GenerationError(
+                f"seed={seed} seller={seller_id}: semantic answer keys must match surfaces"
+            )
         for position, pair in enumerate(surfaces):
             parent = pair[0]
             child = pair[1] if len(pair) > 1 else None
+            contract = contracts.get(answer_keys[position])
+            if contract is None:
+                raise GenerationError(
+                    f"seed={seed} seller={seller_id}: semantic answer key is unknown"
+                )
             candidates.append(
                 {
                     "parent": parent,
@@ -363,6 +437,7 @@ def _generate_seller(
                     "position": position,
                     "canonical": canonicalize_question(parent),
                     "weight": pool.get("weight", 1),
+                    "expected_semantic": contract,
                 }
             )
     candidates.sort(key=lambda item: (item["pool_id"], item["position"]))
@@ -405,6 +480,7 @@ def _generate_seller(
                 "bucket": "answerable_parent",
                 "route": "eligible",
                 "canonical_parent": None,
+                "expected_semantic": candidate["expected_semantic"],
             }
         ]
         if candidate in duplicate_parents:
@@ -414,6 +490,7 @@ def _generate_seller(
                     "bucket": "duplicate_child",
                     "route": "duplicate",
                     "canonical_parent": 0,
+                    "expected_semantic": None,
                 }
             )
         blocks.append(
@@ -440,7 +517,7 @@ def _generate_seller(
     for index, text in enumerate(noise):
         blocks.append(
             {
-                "entries": [{"text": text, "bucket": "noise", "route": "noise", "canonical_parent": None}],
+                "entries": [{"text": text, "bucket": "noise", "route": "noise", "canonical_parent": None, "expected_semantic": None}],
                 "burst": False,
                 "stable_key": f"noise:{index:03d}",
             }
@@ -458,7 +535,7 @@ def _generate_seller(
     ):
         blocks.append(
             {
-                "entries": [{"text": text, "bucket": "ambiguous_or_unsupported", "route": "ambiguous_or_unsupported", "canonical_parent": None}],
+                "entries": [{"text": text, "bucket": "ambiguous_or_unsupported", "route": "ambiguous_or_unsupported", "canonical_parent": None, "expected_semantic": None}],
                 "burst": False,
                 "stable_key": f"ambiguous:{index:02d}",
             }
@@ -466,7 +543,7 @@ def _generate_seller(
     for index, text in enumerate(injections[: scenario.per_seller_quotas.prompt_injection]):
         blocks.append(
             {
-                "entries": [{"text": text, "bucket": "prompt_injection", "route": "adversarial", "canonical_parent": None}],
+                "entries": [{"text": text, "bucket": "prompt_injection", "route": "adversarial", "canonical_parent": None, "expected_semantic": None}],
                 "burst": False,
                 "stable_key": f"injection:{index:02d}",
             }
@@ -539,6 +616,7 @@ def _generate_seller(
                 expected_bucket=item["bucket"],
                 expected_route=item["route"],
                 canonical_event_id=item["canonical_event_id"],
+                expected_semantic=item["expected_semantic"],
             )
         )
     counts = Counter(item.expected_bucket for item in oracle)

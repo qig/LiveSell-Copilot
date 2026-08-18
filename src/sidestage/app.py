@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Callable, Dict, Literal, Optional
+from typing import Callable, Dict, Literal, Optional, Sequence
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Query
@@ -44,11 +44,18 @@ from sidestage.copilot.pipeline import (
     process_customer_reply,
 )
 from sidestage.copilot.retrieval import EvidenceRetriever
+from sidestage.copilot.runtime import (
+    RuntimeCatalog,
+    RuntimeModelProfile,
+    RuntimeModelRegistration,
+    RuntimeSelectionConflict,
+    RuntimeSelector,
+    validate_runtime_registrations,
+)
 from sidestage.copilot.routing import CopilotRouter
 from sidestage.copilot.scheduling import LivesellWorkScheduler
 from sidestage.copilot.workflows import (
-    register_template_workflow,
-    register_two_call_workflow,
+    TemplateWorkflow,
 )
 from sidestage.fixtures.import_trace import trace_seller_fixture_import
 from sidestage.fixtures.loader import SellerCatalog, load_seller_fixture
@@ -68,6 +75,7 @@ from sidestage.streaming.hub import SseHub, StreamEventStore
 from sidestage.streaming.ingest import EventIngestor, PreparedChatSource
 from sidestage.trace.recorder import BufferedTraceSink, SqliteTraceSink, TraceRecorder
 from sidestage.trace.projection import runtime_trace_projection
+from sidestage.trace.runtime_metrics import runtime_latency_projection
 
 
 WallClock = Callable[[], datetime]
@@ -87,6 +95,12 @@ class CustomChatRequest(ApiRequest):
 
 class PreparedChatRequest(ApiRequest):
     count: int = Field(default=1, ge=1, le=8)
+
+
+class RuntimeSelectionChangeRequest(ApiRequest):
+    workflow_id: Literal["one_call_template", "two_call_draft"]
+    model_profile_id: str = Field(min_length=1, max_length=120)
+    expected_selection_version: int = Field(gt=0)
 
 
 @dataclass(frozen=True)
@@ -136,11 +150,56 @@ def create_app(
     model_runner: Optional[ModelRunner] = None,
     model_config_ref: str = "sidestage-model-v1",
     workflow_strategy: Literal["two_call_draft", "one_call_template"] = "two_call_draft",
+    runtime_model_registrations: Optional[Sequence[RuntimeModelRegistration]] = None,
+    default_model_profile_id: Optional[str] = None,
     before_reply_receipt_insert: Optional[Callable[[], None]] = None,
     before_auto_send_commit: Optional[Callable[[], None]] = None,
 ) -> FastAPI:
     catalog = load_seller_fixture()
     clock = wall_clock or (lambda: datetime.now(timezone.utc))
+    configured_runner = model_runner or ScriptedModelRunner(())
+    registrations = tuple(runtime_model_registrations or ())
+    if not registrations:
+        runner_config = getattr(configured_runner, "config", None)
+        provider = (
+            "openrouter"
+            if runner_config is not None and runner_config.openrouter_routing is not None
+            else "openai"
+            if runner_config is not None
+            else "scripted"
+        )
+        registrations = (
+            RuntimeModelRegistration(
+                RuntimeModelProfile(
+                    profile_id=default_model_profile_id or model_config_ref,
+                    display_name=(
+                        runner_config.model_id if runner_config is not None else "Scripted model"
+                    ),
+                    provider=provider,
+                    requested_model_id=(
+                        runner_config.model_id if runner_config is not None else "scripted"
+                    ),
+                    model_config_ref=model_config_ref,
+                    reasoning_effort=(
+                        runner_config.reasoning_effort if runner_config is not None else None
+                    ),
+                    service_tier=(
+                        runner_config.service_tier if runner_config is not None else None
+                    ),
+                    request_timeout_s=(
+                        runner_config.request_timeout_s if runner_config is not None else 5.0
+                    ),
+                    supported_workflows=("one_call_template", "two_call_draft"),
+                ),
+                configured_runner,
+            ),
+        )
+    selected_profile_id = default_model_profile_id or registrations[0].profile.profile_id
+    validate_runtime_registrations(
+        registrations,
+        default_workflow_id=workflow_strategy,
+        default_model_profile_id=selected_profile_id,
+    )
     database = MarketplaceDatabase(database_path)
     database.initialize(catalog, evidence_imported_at=_utc_millis(clock()))
     marketplace = MarketplaceService(database)
@@ -153,7 +212,6 @@ def create_app(
     )
     prepared = PreparedChatSource(seed=prepared_seed)
     sessions = DemoSessionRegistry(catalog)
-    configured_runner = model_runner or ScriptedModelRunner(())
     copilot_router = CopilotRouter(database, catalog)
     trace_sink = BufferedTraceSink(SqliteTraceSink(database))
     trace_recorder = TraceRecorder(
@@ -161,22 +219,24 @@ def create_app(
         wall_clock=clock,
         monotonic=monotonic_clock,
     )
-    if workflow_strategy == "one_call_template":
-        workflow = register_template_workflow(
-            configured_runner,
-            model_config_ref=model_config_ref,
-            monotonic=monotonic_clock,
-            trace_sink=trace_sink,
-        )
+    runtime_catalog = RuntimeCatalog(
+        registrations=registrations,
+        default_workflow_id=workflow_strategy,
+        default_model_profile_id=selected_profile_id,
+        monotonic=monotonic_clock,
+        trace_sink=trace_sink,
+    )
+    runtime_selector = RuntimeSelector(runtime_catalog, wall_clock=clock)
+    default_entry = runtime_catalog.resolve(workflow_strategy, selected_profile_id)
+    workflow = default_entry.workflow
+    default_registration = next(
+        item for item in registrations if item.profile.profile_id == selected_profile_id
+    )
+    configured_runner = default_registration.runner or configured_runner
+    if isinstance(workflow, TemplateWorkflow):
         analyzer = None
         reply_agent = workflow.evidence_template_agent
     else:
-        workflow = register_two_call_workflow(
-            configured_runner,
-            model_config_ref=model_config_ref,
-            monotonic=monotonic_clock,
-            trace_sink=trace_sink,
-        )
         analyzer = workflow.evidence_planner
         reply_agent = workflow.reply_drafter_agent
     retriever = EvidenceRetriever(database, catalog)
@@ -219,11 +279,13 @@ def create_app(
         monotonic=monotonic_clock,
         work_scheduler=work_scheduler,
         workflow=workflow,
+        runtime_catalog=runtime_catalog,
+        runtime_selector=runtime_selector,
     )
 
     application = FastAPI(
         title="SideStage M3B",
-        version="0.3.2",
+        version="0.3.5",
         description="Synthetic live-selling copilot with a closed registered agent workflow",
     )
     application.state.database = database
@@ -244,6 +306,8 @@ def create_app(
     application.state.reply_service = reply_service
     application.state.r3_capability_service = r3_capability_service
     application.state.pipeline_services = pipeline_services
+    application.state.runtime_catalog = runtime_catalog
+    application.state.runtime_selector = runtime_selector
     application.state.trace_sink = trace_sink
     application.add_event_handler("shutdown", trace_sink.close)
 
@@ -271,6 +335,7 @@ def create_app(
                 ingestor,
                 stream_store,
                 session.authority,
+                runtime_selector,
             ),
         }
 
@@ -283,6 +348,7 @@ def create_app(
             ingestor,
             stream_store,
             session.authority,
+            runtime_selector,
         )
 
     @application.post("/api/sessions/{session_token}/chat/custom", status_code=201)
@@ -312,6 +378,7 @@ def create_app(
                 ingestor,
                 stream_store,
                 session.authority,
+                runtime_selector,
             ),
         }
 
@@ -347,6 +414,7 @@ def create_app(
                 ingestor,
                 stream_store,
                 session.authority,
+                runtime_selector,
             ),
         }
 
@@ -375,6 +443,7 @@ def create_app(
             ingestor,
             stream_store,
             session.authority,
+            runtime_selector,
         )
         return result
 
@@ -398,6 +467,7 @@ def create_app(
                 ingestor,
                 stream_store,
                 session.authority,
+                runtime_selector,
             ),
         }
 
@@ -421,6 +491,7 @@ def create_app(
             ingestor,
             stream_store,
             hub,
+            runtime_selector,
         )
 
     @application.post("/api/sessions/{session_token}/actions/swap")
@@ -436,7 +507,8 @@ def create_app(
             idempotency_key=idempotency_key,
         )
         return await _action_response(
-            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub
+            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
+            runtime_selector,
         )
 
     @application.post("/api/sessions/{session_token}/actions/unlist")
@@ -452,7 +524,8 @@ def create_app(
             idempotency_key=idempotency_key,
         )
         return await _action_response(
-            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub
+            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
+            runtime_selector,
         )
 
     @application.post("/api/sessions/{session_token}/actions/price-markdown")
@@ -468,7 +541,8 @@ def create_app(
             idempotency_key=idempotency_key,
         )
         return await _action_response(
-            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub
+            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
+            runtime_selector,
         )
 
     @application.post("/api/sessions/{session_token}/actions/inventory-change")
@@ -484,7 +558,8 @@ def create_app(
             idempotency_key=idempotency_key,
         )
         return await _action_response(
-            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub
+            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
+            runtime_selector,
         )
 
     @application.post(
@@ -505,7 +580,8 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         return await _action_response(
-            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub
+            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
+            runtime_selector,
         )
 
     @application.get("/api/sessions/{session_token}/events")
@@ -543,6 +619,7 @@ def create_app(
                 ingestor,
                 stream_store,
                 session.authority,
+                runtime_selector,
             ),
         }
 
@@ -562,6 +639,62 @@ def create_app(
             )
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @application.get("/api/debug/runtime")
+    def debug_runtime(session_token: str = Query(min_length=1)) -> dict:
+        session = sessions.require(session_token)
+        active = runtime_selector.capture(session.authority)
+        trace_sink.flush()
+        return {
+            **runtime_catalog.public_projection(),
+            "active_selection": active.model_dump(mode="json"),
+            "next_sample_phase": runtime_selector.next_sample_phase(active),
+            "latency": runtime_latency_projection(
+                database,
+                seller_id=session.authority.seller_id,
+                show_id=session.authority.show_id,
+            ),
+        }
+
+    @application.put("/api/debug/runtime")
+    async def change_debug_runtime(
+        request: RuntimeSelectionChangeRequest,
+        session_token: str = Query(min_length=1),
+    ) -> dict:
+        session = sessions.require(session_token)
+        try:
+            changed = runtime_selector.switch(
+                session.authority,
+                workflow_id=request.workflow_id,
+                model_profile_id=request.model_profile_id,
+                expected_selection_version=request.expected_selection_version,
+            )
+        except RuntimeSelectionConflict as error:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": error.code, "message": str(error)},
+            ) from error
+        changed_at = _utc_millis(clock())
+        stream_store.append(
+            seller_id=session.authority.seller_id,
+            show_id=session.authority.show_id,
+            event_type="copilot.runtime.changed",
+            payload=changed.model_dump(mode="json"),
+            created_at=changed_at,
+        )
+        await hub.notify(session.authority.show_id)
+        return {
+            "active_selection": changed.model_dump(mode="json"),
+            "next_sample_phase": runtime_selector.next_sample_phase(changed),
+            "snapshot": _snapshot(
+                catalog,
+                marketplace,
+                ingestor,
+                stream_store,
+                session.authority,
+                runtime_selector,
+            ),
+        }
 
     @application.get("/api/debug/import-trace")
     def import_trace() -> dict:
@@ -611,7 +744,7 @@ def create_live_app(
         Literal["two_call_draft", "one_call_template"]
     ] = None,
 ) -> FastAPI:
-    """Build the reviewer-facing app with one fail-fast live model configuration."""
+    """Build the reviewer-facing app with a fail-fast closed live model catalog."""
 
     provider = model_provider or os.environ.get("SIDESTAGE_MODEL_PROVIDER", "openai")
     if provider not in {"openai", "openrouter"}:
@@ -638,6 +771,7 @@ def create_live_app(
             "live OpenAI app requires OPENAI_API_KEY or SIDESTAGE_MODEL_API_KEY"
         )
     model_id = os.environ.get("SIDESTAGE_MODEL_ID")
+    service_tier = os.environ.get("SIDESTAGE_MODEL_SERVICE_TIER")
     if not api_key:
         raise RuntimeError(missing_key_message)
     if not model_id:
@@ -657,7 +791,39 @@ def create_live_app(
             reasoning_effort=os.environ.get(
                 "SIDESTAGE_MODEL_REASONING_EFFORT", "none"
             ),
+            service_tier=service_tier,
             openrouter_routing=routing,
+        )
+    )
+    default_profile_id = "live-default"
+    default_display_parts = [
+        model_id,
+        runner.config.reasoning_effort or "provider default",
+    ]
+    if runner.config.service_tier is not None:
+        default_display_parts.append(runner.config.service_tier)
+    registrations = [
+        RuntimeModelRegistration(
+            RuntimeModelProfile(
+                profile_id=default_profile_id,
+                display_name=" · ".join(default_display_parts),
+                provider=provider,
+                requested_model_id=model_id,
+                model_config_ref=model_config_ref,
+                reasoning_effort=runner.config.reasoning_effort,
+                service_tier=runner.config.service_tier,
+                request_timeout_s=runner.config.request_timeout_s,
+                supported_workflows=("one_call_template", "two_call_draft"),
+            ),
+            runner,
+        )
+    ]
+    registrations.extend(
+        _supplemental_live_registrations(
+            configured_provider=provider,
+            configured_model_id=model_id,
+            configured_reasoning_effort=runner.config.reasoning_effort,
+            configured_service_tier=runner.config.service_tier,
         )
     )
     application = create_app(
@@ -665,9 +831,9 @@ def create_live_app(
         wall_clock=wall_clock,
         monotonic_clock=monotonic_clock,
         prepared_seed=prepared_seed,
-        model_runner=runner,
-        model_config_ref=model_config_ref,
         workflow_strategy=strategy,
+        runtime_model_registrations=tuple(registrations),
+        default_model_profile_id=default_profile_id,
     )
     application.state.model_runtime = {
         "mode": "live",
@@ -677,6 +843,7 @@ def create_live_app(
         "model_config_ref": runner.config.config_ref,
         "base_url": runner.config.base_url,
         "reasoning_effort": runner.config.reasoning_effort,
+        "service_tier": runner.config.service_tier,
         "request_timeout_s": runner.config.request_timeout_s,
         "strict_function_tools": runner.config.strict_function_tools,
         "openrouter_routing": (
@@ -685,8 +852,97 @@ def create_live_app(
             else None
         ),
     }
-    application.add_event_handler("shutdown", runner.aclose)
+    seen_runners: set[int] = set()
+    for registered_runner in application.state.runtime_catalog.runners:
+        close = getattr(registered_runner, "aclose", None)
+        if close is not None and id(registered_runner) not in seen_runners:
+            seen_runners.add(id(registered_runner))
+            application.add_event_handler("shutdown", close)
     return application
+
+
+def _supplemental_live_registrations(
+    *,
+    configured_provider: str,
+    configured_model_id: str,
+    configured_reasoning_effort: Optional[str],
+    configured_service_tier: Optional[str],
+) -> list[RuntimeModelRegistration]:
+    explicit_path = os.environ.get("SIDESTAGE_RUNTIME_MODEL_CATALOG_PATH")
+    auto_enabled = bool(
+        os.environ.get("OPENAI_API_KEY") and os.environ.get("OPENROUTER_API_KEY")
+    )
+    if explicit_path is None and not auto_enabled:
+        return []
+    path = (
+        Path(explicit_path)
+        if explicit_path is not None
+        else REPOSITORY_ROOT / "config" / "runtime_model_profiles.json"
+    )
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("runtime model catalog could not be loaded") from error
+    if document.get("schema_version") != "sidestage.runtime_model_profiles.v1":
+        raise RuntimeError("runtime model catalog has an unsupported schema version")
+    raw_profiles = document.get("profiles")
+    if not isinstance(raw_profiles, list):
+        raise RuntimeError("runtime model catalog profiles must be a list")
+
+    registrations: list[RuntimeModelRegistration] = []
+    for raw in raw_profiles:
+        if not isinstance(raw, dict):
+            raise RuntimeError("runtime model catalog profile must be an object")
+        values = dict(raw)
+        key_env = values.pop("api_key_env", None)
+        if isinstance(values.get("supported_workflows"), list):
+            values["supported_workflows"] = tuple(values["supported_workflows"])
+        try:
+            profile = RuntimeModelProfile.model_validate(values)
+        except Exception as error:
+            raise RuntimeError("runtime model catalog profile is invalid") from error
+        if (
+            profile.enabled
+            and profile.provider == configured_provider
+            and profile.requested_model_id == configured_model_id
+            and profile.reasoning_effort == configured_reasoning_effort
+            and profile.service_tier == configured_service_tier
+        ):
+            continue
+        if not profile.enabled:
+            registrations.append(RuntimeModelRegistration(profile, None))
+            continue
+        expected_key_env = {
+            "openai": "OPENAI_API_KEY",
+            "openrouter": "OPENROUTER_API_KEY",
+        }.get(profile.provider)
+        if key_env != expected_key_env:
+            raise RuntimeError("runtime model profile key source does not match provider")
+        profile_key = os.environ.get(str(key_env))
+        if not profile_key:
+            raise RuntimeError(f"runtime model profile requires {key_env}")
+        profile_routing = (
+            OpenRouterRoutingConfig() if profile.provider == "openrouter" else None
+        )
+        profile_runner = OpenAICompatibleModelRunner(
+            OpenAICompatibleModelConfig(
+                config_ref=profile.model_config_ref,
+                base_url=(
+                    "https://openrouter.ai/api/v1"
+                    if profile.provider == "openrouter"
+                    else "https://api.openai.com/v1"
+                ),
+                api_key=profile_key,
+                model_id=profile.requested_model_id,
+                request_timeout_s=profile.request_timeout_s,
+                strict_function_tools=True,
+                reasoning_effort=profile.reasoning_effort,
+                service_tier=profile.service_tier,
+                openrouter_routing=profile_routing,
+            )
+        )
+        registrations.append(RuntimeModelRegistration(profile, profile_runner))
+    return registrations
 
 
 async def _action_response(
@@ -697,6 +953,7 @@ async def _action_response(
     ingestor: EventIngestor,
     stream_store: StreamEventStore,
     hub: SseHub,
+    runtime_selector: RuntimeSelector,
 ) -> dict:
     payload = {
         "receipt_id": receipt.receipt_id,
@@ -719,6 +976,7 @@ async def _action_response(
             ingestor,
             stream_store,
             authority,
+            runtime_selector,
         ),
     }
 
@@ -729,6 +987,7 @@ def _snapshot(
     ingestor: EventIngestor,
     stream_store: StreamEventStore,
     authority: SellerAuthority,
+    runtime_selector: Optional[RuntimeSelector] = None,
 ) -> dict:
     seller = catalog.seller(authority.seller_id)
     show = marketplace.show_state(authority.show_id)
@@ -780,6 +1039,18 @@ def _snapshot(
         seller_id=authority.seller_id,
         show_id=authority.show_id,
     )
+    active_runtime = None
+    if runtime_selector is not None:
+        active_selection = runtime_selector.capture(authority)
+        active_profile = runtime_selector.catalog.profile(
+            active_selection.model_profile_id
+        )
+        active_runtime = {
+            **active_selection.model_dump(mode="json"),
+            "model_display_name": active_profile.display_name,
+            "reasoning_effort": active_profile.reasoning_effort,
+            "service_tier": active_profile.service_tier,
+        }
     return {
         "seller": seller.model_dump(mode="json"),
         "show": show.model_dump(mode="json"),
@@ -794,6 +1065,7 @@ def _snapshot(
         "latest_undoable_receipt_id": latest_undoable,
         "stream_offset": stream_store.latest_offset(authority.show_id),
         "copilot_enabled": True,
+        "active_runtime_selection": active_runtime,
         **projection,
     }
 

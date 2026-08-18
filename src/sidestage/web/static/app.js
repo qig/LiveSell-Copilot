@@ -29,6 +29,7 @@
   let noticeTimer = null;
   let idempotencyCounter = 0;
   let snapshotRefresh = null;
+  let sellerSwitchPending = false;
 
   document.addEventListener("DOMContentLoaded", boot);
 
@@ -51,6 +52,7 @@
   function cacheDom() {
     Object.assign(dom, {
       sellerSelect: document.querySelector("#seller-select"),
+      workspace: document.querySelector("#workspace"),
       showId: document.querySelector("#show-id"),
       streamChip: document.querySelector("#stream-chip"),
       streamStatus: document.querySelector("#stream-status"),
@@ -58,6 +60,9 @@
       r3ToggleLabel: document.querySelector("#r3-toggle-label"),
       r3Warning: document.querySelector("#r3-warning"),
       r3Disable: document.querySelector("#r3-disable"),
+      runtimeBadge: document.querySelector("#runtime-badge"),
+      runtimeWorkflow: document.querySelector("#runtime-workflow"),
+      runtimeModel: document.querySelector("#runtime-model"),
       activeSku: document.querySelector("#active-sku"),
       eventCount: document.querySelector("#event-count"),
       toggleStream: document.querySelector("#toggle-stream"),
@@ -170,7 +175,7 @@
 
   async function setActiveSeller(sellerId, {announce}) {
     eventSource?.close();
-    dom.sellerSelect.disabled = true;
+    setSellerSwitchPending(true);
     try {
       const response = await api("/api/demo/sessions", {
         method: "POST",
@@ -187,8 +192,16 @@
         showNotice("Seller session changed", `${snapshot.seller.display_name} is now backed by the server-owned show.`);
       }
     } finally {
-      dom.sellerSelect.disabled = false;
+      setSellerSwitchPending(false);
     }
+  }
+
+  function setSellerSwitchPending(pending) {
+    sellerSwitchPending = pending;
+    dom.sellerSelect.disabled = pending;
+    dom.workspace.inert = pending;
+    dom.workspace.setAttribute("aria-busy", String(pending));
+    dom.r3Toggle.disabled = pending;
   }
 
   function connectEvents() {
@@ -205,7 +218,7 @@
       dom.streamChip.classList.remove("is-running");
       dom.streamStatus.textContent = "Reconnecting";
     };
-    ["chat.accepted", "chat.reply", "marketplace.changed", "copilot.question.changed", "copilot.r3.changed"].forEach((type) => {
+    ["chat.accepted", "chat.reply", "marketplace.changed", "copilot.question.changed", "copilot.r3.changed", "copilot.runtime.changed"].forEach((type) => {
       eventSource.addEventListener(type, () => scheduleSnapshotRefresh());
     });
   }
@@ -234,6 +247,7 @@
     dom.eventCount.textContent = String(snapshot.chat_events.length).padStart(2, "0");
     dom.activeSku.textContent = activeListing()?.sku || "Stage clear";
     renderR3Capability();
+    renderRuntimeBadge();
     renderActiveCue();
     renderCopilotInbox();
     renderOperationDock();
@@ -241,6 +255,24 @@
     renderUndo();
     renderChat();
     renderFixtureState();
+  }
+
+  function renderRuntimeBadge() {
+    const runtime = snapshot?.active_runtime_selection;
+    if (!runtime) {
+      dom.runtimeWorkflow.textContent = "Runtime unavailable";
+      dom.runtimeModel.textContent = "—";
+      dom.runtimeBadge.title = "No runtime selection is attached to this show.";
+      return;
+    }
+    dom.runtimeWorkflow.textContent = runtime.workflow_id === "one_call_template"
+      ? "One-call"
+      : "Two-call";
+    const profileLabel = runtime.model_display_name || runtime.model_profile_id;
+    const reasoning = runtime.reasoning_effort || "provider default";
+    const serviceTier = runtime.service_tier || "standard";
+    dom.runtimeModel.textContent = `${profileLabel} · v${runtime.selection_version}`;
+    dom.runtimeBadge.title = `Read-only active runtime: ${runtime.workflow_id} / ${runtime.model_profile_id} / ${runtime.requested_model_id} / reasoning ${reasoning} / service ${serviceTier} / selection version ${runtime.selection_version}`;
   }
 
   function listingById(listingId) {
@@ -638,6 +670,7 @@
   }
 
   function openOperationDialog(operationType) {
+    if (sellerSwitchPending) return;
     currentOperation = operationType;
     dom.dialogError.hidden = true;
     dom.dialogError.textContent = "";

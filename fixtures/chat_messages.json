@@ -2,6 +2,21 @@
   "schema_version": "1.0",
   "synthetic": true,
   "default_seed": 20260817,
+  "pressure_answer_contracts": {
+    "price": {"template_id": "reply_current_price", "answer_category": "price", "expected_fact_types": ["current_price"]},
+    "shipping": {"template_id": "reply_shipping_policy", "answer_category": "shipping", "expected_fact_types": ["shipping_policy"]},
+    "returns": {"template_id": "reply_returns_policy", "answer_category": "returns", "expected_fact_types": ["returns_policy"]},
+    "payment": {"template_id": "reply_payment_policy", "answer_category": "payment", "expected_fact_types": ["payment_policy"]},
+    "release": {"template_id": "reply_release_date", "answer_category": "product_research", "expected_fact_types": ["release_date"]},
+    "msrp": {"template_id": "reply_msrp", "answer_category": "product_research", "expected_fact_types": ["msrp"]},
+    "materials": {"template_id": "reply_materials", "answer_category": "product_research", "expected_fact_types": ["materials"]},
+    "sizing": {"template_id": "reply_sizing_guidance", "answer_category": "sizing", "expected_fact_types": ["sizing"]},
+    "authenticity": {"template_id": "reply_authenticity", "answer_category": "authenticity", "expected_fact_types": ["authenticity"]},
+    "condition": {"template_id": "reply_condition", "answer_category": "condition", "expected_fact_types": ["condition"]},
+    "availability_m8": {"template_id": "reply_exact_variant_availability", "answer_category": "availability", "expected_fact_types": ["variant_availability"], "variant_label": "US M 8"},
+    "availability_m9": {"template_id": "reply_exact_variant_availability", "answer_category": "availability", "expected_fact_types": ["variant_availability"], "variant_label": "US M 9"},
+    "availability_m10": {"template_id": "reply_exact_variant_availability", "answer_category": "availability", "expected_fact_types": ["variant_availability"], "variant_label": "US M 10"}
+  },
   "selection_mode": "weighted_after_seller_and_scenario_capability_filter",
   "renormalize_after_filter": true,
   "weight_unit": "pool_selection",
@@ -79,6 +94,7 @@
       "seller_scope": "all",
       "weight": 10,
       "pressure_answerable": true,
+      "pressure_answer_keys": ["shipping", "returns", "payment", "shipping"],
       "messages": [
         "how long does shipping take?",
         "can I return these if they don't fit?",
@@ -92,6 +108,7 @@
       "seller_scope": "all",
       "weight": 6,
       "pressure_answerable": true,
+      "pressure_answer_keys": ["price", "shipping", "availability_m9", "returns"],
       "messages": [
         "hey 🔥 how much is the current pair?",
         "hi, how long does shipping take?",
@@ -173,6 +190,7 @@
       "seller_scope": "sel_velocity_kicks",
       "weight": 16,
       "pressure_answerable": true,
+      "pressure_answer_keys": ["price", "availability_m8", "availability_m10", "shipping", "returns", "payment", "release", "msrp", "materials", "sizing", "authenticity", "condition"],
       "messages": [
         "what is the current price on the Aero Dash right now?",
         "is the Aero Dash available in size 8?",
@@ -194,6 +212,7 @@
       "seller_scope": "sel_velocity_kicks",
       "weight": 3,
       "pressure_answerable": true,
+      "pressure_answer_keys": ["availability_m9", "price"],
       "emission_mode": "adjacent_duplicate_pair",
       "messages": [
         "do you have the Aero Dash in size 9?",
@@ -206,6 +225,7 @@
       "seller_scope": "sel_velocity_kicks",
       "weight": 3,
       "pressure_answerable": true,
+      "pressure_answer_keys": ["release", "availability_m9"],
       "emission_mode": "adjacent_normalized_pair",
       "message_pairs": [
         [
@@ -265,6 +285,7 @@
       "seller_scope": "sel_vault_consign",
       "weight": 16,
       "pressure_answerable": true,
+      "pressure_answer_keys": ["price", "availability_m9", "availability_m9", "shipping", "returns", "payment", "release", "msrp", "materials", "sizing", "authenticity", "condition"],
       "messages": [
         "what is the current price on the Heritage High 88 right now?",
         "do you have the Heritage High 88 in size 9 right now?",
@@ -286,6 +307,7 @@
       "seller_scope": "sel_vault_consign",
       "weight": 3,
       "pressure_answerable": true,
+      "pressure_answer_keys": ["condition", "price"],
       "emission_mode": "adjacent_duplicate_pair",
       "messages": [
         "can you confirm the condition of the Heritage High 88?",
@@ -298,6 +320,7 @@
       "seller_scope": "sel_vault_consign",
       "weight": 3,
       "pressure_answerable": true,
+      "pressure_answer_keys": ["release", "availability_m9"],
       "emission_mode": "adjacent_normalized_pair",
       "message_pairs": [
         [
@@ -357,6 +380,7 @@
       "seller_scope": "sel_rotation_kicks",
       "weight": 16,
       "pressure_answerable": true,
+      "pressure_answer_keys": ["price", "availability_m9", "availability_m9", "shipping", "returns", "payment", "release", "msrp", "materials", "sizing", "authenticity", "condition"],
       "messages": [
         "what is the current price on the Flash Arc right now?",
         "do you have the Flash Arc in size 9 right now?",
@@ -378,6 +402,7 @@
       "seller_scope": "sel_rotation_kicks",
       "weight": 3,
       "pressure_answerable": true,
+      "pressure_answer_keys": ["availability_m9", "price"],
       "emission_mode": "adjacent_duplicate_pair",
       "messages": [
         "do you have the Flash Arc in size 9 today?",
@@ -390,6 +415,7 @@
       "seller_scope": "sel_rotation_kicks",
       "weight": 3,
       "pressure_answerable": true,
+      "pressure_answer_keys": ["availability_m9", "release"],
       "emission_mode": "adjacent_normalized_pair",
       "message_pairs": [
         [

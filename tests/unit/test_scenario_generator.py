@@ -40,6 +40,12 @@ def test_pressure_generator_is_quota_first_and_has_exact_burst_semantics() -> No
         }
         assert sum(10_000 <= event.at_ms < 12_000 for event in events) == 20
         assert all(0 <= event.at_ms < 30_000 for event in events)
+        assert all(
+            oracle_by_id[event.event_id]["expected_semantic"] is not None
+            if oracle_by_id[event.event_id]["expected_bucket"] == "answerable_parent"
+            else oracle_by_id[event.event_id]["expected_semantic"] is None
+            for event in events
+        )
 
         by_id = {event.event_id: event for event in events}
         duplicate_children = [
@@ -76,9 +82,26 @@ def test_same_seed_and_inputs_are_byte_identical_and_runtime_stream_has_no_oracl
         "expected_route",
         "expected_bucket",
         "canonical_event_id",
+        "expected_semantic",
+        "pressure_answer_keys",
     ):
         assert forbidden not in runtime_text
     assert "expected_route" in (first_dir / "oracle.json").read_text(encoding="utf-8")
+    assert "profile_digest" not in first.manifest
+    assert "model_config_ref" not in first.manifest
+
+
+def test_generator_rejects_missing_semantic_contract_for_answerable_surface(
+    tmp_path: Path,
+) -> None:
+    chat = json.loads((ROOT / "fixtures" / "chat_messages.json").read_text(encoding="utf-8"))
+    pool = next(item for item in chat["pools"] if item.get("pressure_answerable"))
+    pool["pressure_answer_keys"] = pool["pressure_answer_keys"][:-1]
+    malformed = tmp_path / "chat-missing-semantic.json"
+    malformed.write_text(json.dumps(chat), encoding="utf-8")
+
+    with pytest.raises(GenerationError, match="semantic answer keys"):
+        generate_pressure(SCENARIO, seed=20260817, chat_path=malformed)
 
 
 def test_authored_normalized_surfaces_and_exact_duplicates_are_emitted_as_events() -> None:

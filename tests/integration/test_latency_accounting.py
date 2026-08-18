@@ -13,6 +13,7 @@ from sidestage.copilot.pipeline import RawCustomerReplyEvent, process_customer_r
 from sidestage.marketplace.authority import SellerAuthority
 from sidestage.marketplace.service import PushRequest
 from sidestage.trace.recorder import BufferedTraceSink, TraceRecorder
+from sidestage.trace import pressure as pressure_module
 from sidestage.trace.pressure import evaluate_pressure
 from .test_r3_safety import R3ScenarioRunner
 from .test_reply_pipeline_trace import _raw, _services
@@ -319,6 +320,10 @@ def test_scripted_pressure_replays_three_exact_workloads_with_full_accounting() 
     assert report["scheduler"]["max_global_active"] == 12
     assert set(report["scheduler"]["max_show_active"].values()) == {4}
     assert report["latency"]["total_ms"]["count"] == 360
+    assert report["latency"]["reported_denominator"] == "all_events"
+    assert report["latency"]["release_slo_denominator"] == "answerable_parent"
+    assert report["latency"]["denominators"]["all_events"]["total_ms"]["count"] == 360
+    assert report["latency"]["denominators"]["answerable_parent"]["total_ms"]["count"] == 72
     assert report["stage_latency"]["registered_reply_agent"]["count"] > 0
     assert report["scorecard"]["answerable_supported_suggestions"] == {
         "total": 72,
@@ -326,6 +331,14 @@ def test_scripted_pressure_replays_three_exact_workloads_with_full_accounting() 
         "rate": 1.0,
         "minimum_rate": 0.95,
     }
+    assert report["scorecard"]["answerable_semantically_correct"] == {
+        "total": 72,
+        "passed": 72,
+        "rate": 1.0,
+        "minimum_rate": 0.95,
+    }
+    assert report["semantic_scorecard"]["category"]["passed"] == 72
+    assert report["semantic_scorecard"]["evidence"]["passed"] == 72
     assert report["scorecard_passed"] is True
     assert report["slo_applicable"] is False
     assert report["profile_digest"] == report["model"]["profile_digest"]
@@ -333,6 +346,15 @@ def test_scripted_pressure_replays_three_exact_workloads_with_full_accounting() 
     assert report["worktree_dirty"] is True
     assert report["passed"] is True
     assert "does not establish GMV" in report["claims_boundary"]
+
+
+def test_semantic_variant_match_requires_the_exact_variant_label() -> None:
+    assert pressure_module._evidence_value_matches_variant(
+        "US M 9: 2 available", "US M 9"
+    )
+    assert not pressure_module._evidence_value_matches_variant(
+        "US M 9.5: 2 available", "US M 9"
+    )
 
 
 def test_one_call_pressure_uses_one_request_per_admitted_parent_and_same_safety_gates() -> None:
@@ -353,4 +375,12 @@ def test_one_call_pressure_uses_one_request_per_admitted_parent_and_same_safety_
         "rate": 1.0,
         "minimum_rate": 0.95,
     }
+    assert report["scorecard"]["answerable_semantically_correct"]["passed"] == 72
+    assert report["semantic_scorecard"]["template"] == {
+        "applicable": True,
+        "total": 72,
+        "passed": 72,
+        "rate": 1.0,
+    }
+    assert report["latency"]["denominators"]["model_backed"]["total_ms"]["count"] == 135
     assert report["passed"] is True

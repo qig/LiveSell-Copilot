@@ -621,8 +621,16 @@ Record fixes that appeared plausible but failed, degraded another invariant, or 
 - **Observed evidence:** the nested fixture manifest records baseline digest `sha256:5385...57b8`, while the one-call evaluation records challenger digest `sha256:db3d...3133`.
 - **Root cause:** `pressure_v1` events and oracle are deliberately reused across workflows for comparability, but their retained fixture manifest was generated while bound to the baseline profile. The evaluator adds the active challenger digest at the report level without rejecting or explaining the nested mismatch.
 - **Impact:** event/oracle digests still identify the fixed workload, but the combined artifact cannot be treated as a single internally profile-bound manifest. This weakens reproducibility claims if the distinction is not disclosed.
-- **Fix:** pending design review. The metrics report labels the mismatch. A final artifact schema should separate the workflow-neutral workload manifest from the evaluation profile, or reject an unexplained mismatch.
-- **Verification:** no fix is claimed; the issue is documented in `docs/evidence/m3-pressure-metrics-report.md` and must remain open before final `Measured` evidence.
+- **Fix:** the v2 workload manifest now contains only scenario/fixture identity; `profile_digest` and `model_config_ref` are report-level evaluation identity. `pressure_v1` no longer declares a model configuration, and the evaluator derives a strategy-specific configuration reference.
+- **Verification:** `tests/unit/test_scenario_generator.py` asserts both fields are absent from the workload manifest. Scripted two-call and one-call pressure tests pass with distinct report-level configuration/profile identity. The legacy artifact remains mismatched and is not rewritten or promoted.
+
+### 2026-08-18: Broker acceptance could count a grounded but semantically wrong reply
+
+- **Command:** review of `scorecard.answerable_supported_suggestions` in `src/sidestage/trace/pressure.py`, followed by `.venv/bin/pytest -q tests/unit/test_scenario_generator.py tests/integration/test_fixture_replay.py tests/integration/test_latency_accounting.py -x`.
+- **Observed evidence:** the old numerator checked only whether an answerable question reached `awaiting_review` or `auto_answered`; it did not compare the selected category, evidence fact type, approved template, or exact variant with the authored question. The same report computed release p95 from all 360 events, so fast noise/duplicate paths and answerable/model-backed paths shared one denominator.
+- **Root cause:** the v1 oracle described routing and duplicate identity only. It had no expected semantic answer contract, and the latency report had one backward-compatible all-event aggregate with no declared release denominator.
+- **Fix:** added explicit evaluator-only semantic contracts for all 72 answerable parents, semantic tamper reconstruction during replay, separate broker-acceptance and semantic-correctness gates, category/evidence/template/variant component metrics, and all-event/answerable/model-backed/R2/R3 latency slices. The release SLO now uses answerable-parent acceptance-to-publication p95. Semantic labels remain absent from runtime events and model input.
+- **Verification:** the focused generator/replay/latency suite passes. Both scripted workflows score 72/72 semantic correctness; the one-call run retains 135 model-backed traces; tampering with an oracle category and rehashing the artifact is rejected; and an exact-variant regression proves `US M 9` cannot match `US M 9.5`. The exact full offline command `.venv/bin/pytest -q -m 'not live_model'` passes with `300 passed, 5 deselected in 53.98s`. No legacy live artifact is retroactively rescored.
 
 ### 2026-08-18: Commit verification initially used the wrong interpreter and a restricted localhost sandbox
 
@@ -632,12 +640,44 @@ Record fixes that appeared plausible but failed, degraded another invariant, or 
 - **Fix:** use the repository environment and authorize localhost binding for server/browser verification; no application or test code changed.
 - **Verification:** the selected runtime suite passed with `262 passed, 4 deselected in 18.42s`. After commits `7d6c349` and `6ba208a`, the exact full command `.venv/bin/pytest -q` passed with `288 passed, 4 deselected in 43.52s`.
 
+### 2026-08-18: Playwright option matcher misreported a disabled compatibility choice
+
+- **Command:** `uv run pytest -q tests/integration/test_runtime_switching.py tests/e2e/test_debugger.py`
+- **Observed evidence:** the debugger browser test failed at the new compatibility assertion. Playwright's log showed the resolved element as `<option disabled value="template-only">`, while `expect(locator).to_be_disabled()` still reported the option as enabled.
+- **Root cause:** the generic enabled/disabled matcher applies control semantics that are unreliable for an individual `<option>` in this browser binding; the application had correctly written the DOM `disabled` property.
+- **Fix:** assert the exact option's `disabled` DOM property before and after changing the workflow selector. No application behavior or compatibility rule changed.
+- **Verification:** `uv run pytest -q tests/e2e/test_debugger.py` passed with `1 passed in 2.54s`; the earlier full pre-commit gate passed with `296 passed, 4 deselected in 50.30s`. After adding the separately marked live switch smoke and correcting catalog reasoning effort, the full gate passed again with `296 passed, 5 deselected in 56.79s`.
+
+### 2026-08-18: Local `.env` could not start the live multi-model app
+
+- **Command:** `uv run --env-file .env python -c '<create_live_app sanitized-catalog startup check>'` after printing only dotenv variable names with `awk`; no credential value or provider request was emitted.
+- **Observed evidence:** the file defines `OPEN_API_KEY` and `OPENROUTER_API_KEY`, but not `SIDESTAGE_MODEL_ID`. `create_live_app()` failed before database initialization with `RuntimeError: live app requires SIDESTAGE_MODEL_ID`.
+- **Root cause:** `OPEN_API_KEY` is not the supported OpenAI variable name (`OPENAI_API_KEY` or `SIDESTAGE_MODEL_API_KEY`), and the default model/profile settings are absent. The application intentionally does not guess a provider model or accept the misspelled key alias.
+- **Fix:** pending builder credential-file correction. Keep one `KEY=value` per line, rename the OpenAI variable, and add the startup default shown in `README.md`. Do not put credentials in committed catalog JSON.
+- **Verification:** the builder's `.env` has not yet passed default startup. A command-scoped OpenRouter/Kimi override separately passed the real one-call workflow smoke with `1 passed in 2.28s`; that proves the OpenRouter credential and one live workflow contract, not multi-model startup or the M3B.6 pressure gate.
+
+### 2026-08-18: Selectable OpenRouter profiles drifted from their tested reasoning effort
+
+- **Commands:** `SIDESTAGE_MODEL_PROVIDER=openrouter SIDESTAGE_MODEL_ID=moonshotai/kimi-k3 SIDESTAGE_MODEL_REASONING_EFFORT=none SIDESTAGE_WORKFLOW_STRATEGY=one_call_template uv run --env-file .env pytest tests/integration/test_live_app_factory.py::test_live_openrouter_factory_executes_one_template_call -m live_model -q -s`, followed by the same command with `SIDESTAGE_MODEL_REASONING_EFFORT=low`.
+- **Observed evidence:** the `none` run failed closed as `provider_error` with `1 failed in 0.86s`; its persisted trace pinned `one_call_template`, `moonshotai/kimi-k3`, OpenRouter, selection version 1, and the cold sample. The `low` run completed the real evidence/template/broker path with `1 passed in 2.28s`.
+- **Root cause:** `config/runtime_model_profiles.json` registered Kimi and DeepSeek with `reasoning_effort=none`, while the accepted Kimi compatibility smoke and both retained OpenRouter pressure cells used `low`. The debugger could therefore select a startup profile that did not match the configuration it claimed to expose as tested.
+- **Fix:** align the enabled Kimi and DeepSeek startup profiles to `reasoning_effort=low` and assert both values in the sanitized live-catalog integration test. No provider fallback, model fallback, workflow fallback, or timeout was changed.
+- **Verification:** the corrected direct command passed with `1 passed in 2.28s`. A new live runtime-switch test then started the multi-model app, changed the show from version 1 to Kimi version 2 through `/api/debug/runtime`, and pinned the resulting cold trace to `openrouter-kimi-k3`; the provider request failed closed. A temporary test-only response capture, removed immediately after diagnosis, identified HTTP 429 `Provider returned error`. The switch path and fail-closed behavior reached the live provider, but a successful switched response is not yet claimed. The full deterministic/browser gate passed after the correction with `296 passed, 5 deselected in 56.79s`; one-request compatibility does not establish p95 or close M3B.6.
+
+### 2026-08-18: Seller action could race a pending seller-session change
+
+- **Command:** `.venv/bin/pytest -q -m 'not live_model'`.
+- **Observed evidence:** `test_non_ai_marketplace_flow_is_server_owned_and_reconnectable` failed after confirming Push because `#active-sku` remained `Stage clear`; the full run reported `1 failed, 299 passed, 5 deselected in 61.99s`. The isolated test then passed, showing the failure depended on timing rather than a deterministic marketplace-service refusal.
+- **Root cause:** the final seller selection dispatched an asynchronous `/api/demo/sessions` request, but the old seller's workspace controls remained actionable. Under full-suite load, Playwright could observe the old empty-show Push button as enabled and click it before the new VelocityKicks session arrived. The operation was therefore scoped to the prior opaque session token, after which the arriving VelocityKicks snapshot correctly replaced the view with its still-empty show.
+- **Fix:** mark the workspace `inert` and `aria-busy=true`, disable the seller selector and header R3 control, and reject operation-dialog opening while a seller-session change is pending. The authoritative backend tenant boundary did not change.
+- **Verification:** the browser test now deliberately pauses the final `/api/demo/sessions` fetch, proves the workspace is inert and busy during the gap, releases it, proves the VelocityKicks show is active, and completes the full marketplace flow. The focused regression passes, and the exact full command passes with `300 passed, 5 deselected in 53.98s`.
+
 ## 10. Known issues and limitations
 
 - M2.3 uses synthetic in-process demo sessions rather than production authentication. SQLite is authoritative and survives a server restart, but opaque demo-session tokens do not.
 - The credential-free `create_app()` factory uses an empty fail-closed scripted runner unless code injects a `ModelRunner`; use the explicit `create_live_app()` factory for the credentialed reviewer path.
-- The M3B eight-stage debugger reads persisted runtime observations and its deterministic behavior is `Verified` at commits `7d6c349` and `6ba208a`. The existing live pressure artifacts predate those commits and remain `Implemented` diagnostics rather than `Measured` release evidence.
-- No current live reply cell passes the release gate. One-call Luna is the strongest result at 66/72 supported answerable suggestions, zero hard timeouts, and 3,414.37 ms p95; it improves materially over two-call Luna but still misses quality and latency. DeepSeek and Kimi OpenRouter pressure cells exceeded five seconds p95 with extensive hard timeouts, and GLM did not pass compatibility screening.
+- The M3B eight-stage debugger reads persisted runtime observations and its M3B.1-M3B.4 deterministic behavior is `Verified` at commits `7d6c349` and `6ba208a`. The M3B.5 runtime selector is `Implemented` only in the current uncommitted tree; its pre-commit suite passes, but commit-bound `Verified` evidence is pending. Existing live pressure artifacts remain `Implemented` diagnostics rather than `Measured` release evidence.
+- No current live reply cell passes the release gate. One-call Luna is the strongest legacy broker-acceptance result at 66/72 and 3,414.37 ms all-event p95, but that artifact predates semantic scoring and answerable-parent p95. New Luna standard/priority and Gemini Flash/Flash-Lite cells must be run under evaluator v2 before selecting a release configuration.
 - Port `8000` was occupied by an unrelated local Uvicorn process during the documentation closeout. This is an environment conflict rather than an application defect; the committed app was smoke-tested on port `8766` without changing application code.
 
 ## 11. Interview quick reference

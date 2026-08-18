@@ -39,6 +39,13 @@ class AcceptedChatEvent(BaseModel):
     trace_id: str
     source_epoch_id: Optional[str]
     source_listing_id: Optional[str]
+    workflow_id: Optional[Literal["one_call_template", "two_call_draft"]] = None
+    model_profile_id: Optional[str] = None
+    requested_model_id: Optional[str] = None
+    model_config_ref: Optional[str] = None
+    model_provider: Optional[Literal["openai", "openrouter", "scripted"]] = None
+    selection_version: Optional[int] = None
+    selection_selected_at: Optional[str] = None
 
 
 class EventIngestor:
@@ -61,6 +68,7 @@ class EventIngestor:
         raw_text: str,
         input_origin: Literal["prepared", "custom"],
         trace_id: Optional[str] = None,
+        runtime_selection=None,
     ) -> AcceptedChatEvent:
         event_values = {
             "event_id": f"evt_{uuid4().hex}",
@@ -71,6 +79,29 @@ class EventIngestor:
             "input_origin": input_origin,
             "accepted_at": _utc_millis(self.wall_clock()),
             "trace_id": trace_id or f"trc_{uuid4().hex}",
+            "workflow_id": (
+                runtime_selection.workflow_id if runtime_selection is not None else None
+            ),
+            "model_profile_id": (
+                runtime_selection.model_profile_id if runtime_selection is not None else None
+            ),
+            "requested_model_id": (
+                runtime_selection.requested_model_id if runtime_selection is not None else None
+            ),
+            "model_config_ref": (
+                runtime_selection.model_config_ref if runtime_selection is not None else None
+            ),
+            "model_provider": (
+                runtime_selection.provider if runtime_selection is not None else None
+            ),
+            "selection_version": (
+                runtime_selection.selection_version if runtime_selection is not None else None
+            ),
+            "selection_selected_at": (
+                _utc_millis(runtime_selection.selected_at)
+                if runtime_selection is not None
+                else None
+            ),
         }
         with self.database.transaction() as connection:
             show = connection.execute(
@@ -100,8 +131,10 @@ class EventIngestor:
                 """INSERT INTO chat_events(
                        event_id, seller_id, show_id, customer_display_name, raw_text,
                        input_origin, accepted_at, show_seq, trace_id,
-                       source_epoch_id, source_listing_id
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       source_epoch_id, source_listing_id, workflow_id,
+                       model_profile_id, requested_model_id, model_config_ref,
+                       model_provider, selection_version, selection_selected_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     event.event_id,
                     event.seller_id,
@@ -114,6 +147,13 @@ class EventIngestor:
                     event.trace_id,
                     event.source_epoch_id,
                     event.source_listing_id,
+                    event.workflow_id,
+                    event.model_profile_id,
+                    event.requested_model_id,
+                    event.model_config_ref,
+                    event.model_provider,
+                    event.selection_version,
+                    event.selection_selected_at,
                 ),
             )
             self.stream_store.append(
@@ -131,7 +171,9 @@ class EventIngestor:
             rows = connection.execute(
                 """SELECT event_id, seller_id, show_id, customer_display_name, raw_text,
                           input_origin, accepted_at, show_seq, trace_id,
-                          source_epoch_id, source_listing_id
+                          source_epoch_id, source_listing_id, workflow_id,
+                          model_profile_id, requested_model_id, model_config_ref,
+                          model_provider, selection_version, selection_selected_at
                    FROM chat_events
                    WHERE seller_id = ? AND show_id = ? ORDER BY show_seq""",
                 (authority.seller_id, authority.show_id),

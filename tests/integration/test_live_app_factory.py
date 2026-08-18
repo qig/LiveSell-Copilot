@@ -18,7 +18,9 @@ _MODEL_ENV = (
     "SIDESTAGE_MODEL_ID",
     "SIDESTAGE_MODEL_BASE_URL",
     "SIDESTAGE_MODEL_REASONING_EFFORT",
+    "SIDESTAGE_MODEL_SERVICE_TIER",
     "SIDESTAGE_WORKFLOW_STRATEGY",
+    "SIDESTAGE_RUNTIME_MODEL_CATALOG_PATH",
 )
 
 
@@ -48,6 +50,7 @@ def test_live_app_factory_builds_one_sanitized_strict_runner_from_environment(
     monkeypatch.setenv("SIDESTAGE_MODEL_ID", "gpt-5.6-luna")
     monkeypatch.setenv("SIDESTAGE_MODEL_BASE_URL", "https://api.openai.com/v1/")
     monkeypatch.setenv("SIDESTAGE_MODEL_REASONING_EFFORT", "none")
+    monkeypatch.setenv("SIDESTAGE_MODEL_SERVICE_TIER", "priority")
 
     application = create_live_app(database_path=tmp_path / "live.sqlite3")
     runner = application.state.analyzer.model_runner
@@ -61,6 +64,7 @@ def test_live_app_factory_builds_one_sanitized_strict_runner_from_environment(
         "model_config_ref": "sidestage-livesell-live-v1",
         "base_url": "https://api.openai.com/v1",
         "reasoning_effort": "none",
+        "service_tier": "priority",
         "request_timeout_s": 5.0,
         "strict_function_tools": True,
         "openrouter_routing": None,
@@ -68,6 +72,7 @@ def test_live_app_factory_builds_one_sanitized_strict_runner_from_environment(
     assert config.model_id == "gpt-5.6-luna"
     assert config.strict_function_tools is True
     assert config.reasoning_effort == "none"
+    assert config.service_tier == "priority"
     assert "credential-must-not-be-recorded" not in repr(config)
     assert "credential-must-not-be-recorded" not in repr(application.state.model_runtime)
 
@@ -136,6 +141,59 @@ def test_openrouter_provider_rejects_an_openai_key_mismatch_before_database_init
     assert not database_path.exists()
 
 
+def test_live_factory_registers_sanitized_multi_model_catalog_when_both_keys_exist(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_model_environment(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-secret")
+    monkeypatch.setenv("SIDESTAGE_MODEL_ID", "gpt-5.6-luna")
+
+    application = create_live_app(database_path=tmp_path / "model-catalog.sqlite3")
+    with TestClient(application) as client:
+        token = client.post(
+            "/api/demo/sessions",
+            json={"seller_id": "sel_velocity_kicks"},
+        ).json()["session_token"]
+        projection = client.get(
+            "/api/debug/runtime", params={"session_token": token}
+        ).json()
+
+    models = {item["profile_id"]: item for item in projection["models"]}
+    assert set(models) == {
+        "live-default",
+        "openai-luna-low",
+        "openai-luna-priority-none",
+        "openrouter-gemini-3-7-flash-low",
+        "openrouter-gemini-3-5-flash-lite-minimal",
+        "openrouter-deepseek-v4-flash",
+        "openrouter-kimi-k3",
+        "openrouter-glm-5-2-diagnostic",
+    }
+    assert models["live-default"]["display_name"] == "gpt-5.6-luna · none"
+    assert models["openrouter-deepseek-v4-flash"]["supported_workflows"] == [
+        "one_call_template"
+    ]
+    assert models["openrouter-deepseek-v4-flash"]["reasoning_effort"] == "low"
+    assert models["openrouter-kimi-k3"]["reasoning_effort"] == "low"
+    assert models["openai-luna-low"]["reasoning_effort"] == "low"
+    assert models["openai-luna-low"]["service_tier"] is None
+    assert models["openai-luna-priority-none"]["reasoning_effort"] == "none"
+    assert models["openai-luna-priority-none"]["service_tier"] == "priority"
+    assert models["openrouter-gemini-3-7-flash-low"]["reasoning_effort"] == "low"
+    assert models["openrouter-gemini-3-5-flash-lite-minimal"]["reasoning_effort"] == (
+        "minimal"
+    )
+    assert models["openrouter-glm-5-2-diagnostic"]["enabled"] is False
+    assert models["openrouter-glm-5-2-diagnostic"]["disabled_reason"] == (
+        "strict_tool_compatibility_failed"
+    )
+    serialized = json.dumps(projection)
+    assert "openai-secret" not in serialized
+    assert "openrouter-secret" not in serialized
+
+
 @pytest.mark.live_model
 def test_live_app_factory_executes_the_real_two_call_r2_path(tmp_path: Path) -> None:
     api_key = os.environ.get("SIDESTAGE_MODEL_API_KEY") or os.environ.get(
@@ -145,7 +203,11 @@ def test_live_app_factory_executes_the_real_two_call_r2_path(tmp_path: Path) -> 
     if not api_key or not model_id:
         pytest.skip("set a supported API key and SIDESTAGE_MODEL_ID for the live app smoke")
 
-    application = create_live_app(database_path=tmp_path / "live-smoke.sqlite3")
+    application = create_live_app(
+        database_path=tmp_path / "live-smoke.sqlite3",
+        workflow_strategy="two_call_draft",
+    )
+    assert application.state.workflow_strategy == "two_call_draft"
     with TestClient(application) as client:
         session = client.post(
             "/api/demo/sessions",
@@ -229,3 +291,69 @@ def test_live_openrouter_factory_executes_one_template_call(tmp_path: Path) -> N
     assert result["broker_decision"]["outcome"] == "review"
     assert result["broker_decision"]["template_id"] == "reply_current_price"
     assert result["latency"]["hard_timeout_outcome"] is False
+
+
+@pytest.mark.live_model
+def test_live_runtime_switch_executes_catalog_kimi_profile(tmp_path: Path) -> None:
+    if not (
+        os.environ.get("OPENAI_API_KEY")
+        and os.environ.get("OPENROUTER_API_KEY")
+        and os.environ.get("SIDESTAGE_MODEL_ID")
+    ):
+        pytest.skip("set both provider keys and a default SIDESTAGE_MODEL_ID")
+
+    application = create_live_app(
+        database_path=tmp_path / "live-runtime-switch.sqlite3",
+        model_provider="openai",
+        workflow_strategy="one_call_template",
+    )
+    with TestClient(application) as client:
+        token = client.post(
+            "/api/demo/sessions",
+            json={"seller_id": "sel_velocity_kicks"},
+        ).json()["session_token"]
+        runtime = client.get(
+            "/api/debug/runtime", params={"session_token": token}
+        ).json()
+        kimi = next(
+            model
+            for model in runtime["models"]
+            if model["profile_id"] == "openrouter-kimi-k3"
+        )
+        assert kimi["reasoning_effort"] == "low"
+
+        changed = client.put(
+            "/api/debug/runtime",
+            params={"session_token": token},
+            json={
+                "workflow_id": "one_call_template",
+                "model_profile_id": "openrouter-kimi-k3",
+                "expected_selection_version": 1,
+            },
+        )
+        assert changed.status_code == 200
+        assert changed.json()["active_selection"]["selection_version"] == 2
+
+        pushed = client.post(
+            f"/api/sessions/{token}/actions/push",
+            json={
+                "target_listing_id": "lst_velocity_aero_dash",
+                "expected_show_version": 1,
+            },
+            headers={"Idempotency-Key": "live-runtime-kimi-push"},
+        )
+        assert pushed.status_code == 200
+        answered = client.post(
+            f"/api/sessions/{token}/chat/custom",
+            json={"raw_text": "How much is the Aero Dash today?"},
+        )
+        assert answered.status_code == 201
+
+    result = answered.json()["pipeline_results"][0]
+    assert result["status"] == "completed", result
+    assert result["broker_decision"]["outcome"] == "review"
+    assert result["broker_decision"]["template_id"] == "reply_current_price"
+    assert result["runtime_selection"]["workflow_id"] == "one_call_template"
+    assert result["runtime_selection"]["model_profile_id"] == "openrouter-kimi-k3"
+    assert result["runtime_selection"]["selection_version"] == 2
+    assert result["sample_phase"] == "cold"

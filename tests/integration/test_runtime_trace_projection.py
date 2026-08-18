@@ -114,8 +114,9 @@ def test_runtime_projection_is_persisted_complete_filterable_and_sanitized(
         "agent_run_result",
         "broker_decision",
         "publication",
-        "end_to_end_latency",
-    }
+            "end_to_end_latency",
+            "runtime_selection",
+        }
     artifact_payload = [
         artifact["payload"]
         for stage in eligible["stages"]

@@ -713,9 +713,13 @@ class R2ResultHandler:
                            seller_id, show_id, actor_id, mode, reply_text,
                            evidence_ids_json, broker_outcome, guardrail_verdict,
                            authorization_version, validated_versions_json,
+                           workflow_id, model_profile_id, requested_model_id,
+                           model_config_ref, model_provider, selection_version,
+                           sample_phase, resolved_model_id, resolved_provider,
                            warnings_json, created_at
                        ) VALUES (?, ?, ?, ?, ?, ?, 'sidestage_r3', 'r3', ?, ?,
-                                 'auto_send', 'r3_final_revalidated', ?, ?, '[]', ?)""",
+                                 'auto_send', 'r3_final_revalidated', ?, ?,
+                                 ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?)""",
                     (
                         receipt_id,
                         reply_id,
@@ -727,6 +731,15 @@ class R2ResultHandler:
                         json.dumps(decision.evidence_ids, separators=(",", ":")),
                         authorization.capability_version,
                         json.dumps(validated_versions, sort_keys=True, separators=(",", ":")),
+                        question["workflow_id"],
+                        question["model_profile_id"],
+                        question["requested_model_id"],
+                        question["model_config_ref"],
+                        question["model_provider"],
+                        question["selection_version"],
+                        question["sample_phase"],
+                        question["resolved_model_id"],
+                        question["resolved_provider"],
                         changed_at,
                     ),
                 )
@@ -1084,8 +1097,12 @@ class SellerReplyService:
                                receipt_id, reply_id, question_id, canonical_question_id,
                                seller_id, show_id, actor_id, mode, reply_text,
                                evidence_ids_json, broker_outcome, guardrail_verdict,
+                               workflow_id, model_profile_id, requested_model_id,
+                               model_config_ref, model_provider, selection_version,
+                               sample_phase, resolved_model_id, resolved_provider,
                                warnings_json, created_at
-                           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'r2', ?, ?, 'review', ?, ?, ?)""",
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'r2', ?, ?, 'review', ?,
+                                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             receipt_id,
                             reply_id,
@@ -1097,6 +1114,15 @@ class SellerReplyService:
                             reply_text,
                             json.dumps(evidence_ids, separators=(",", ":")),
                             guardrail_verdict,
+                            question["workflow_id"],
+                            question["model_profile_id"],
+                            question["requested_model_id"],
+                            question["model_config_ref"],
+                            question["model_provider"],
+                            question["selection_version"],
+                            question["sample_phase"],
+                            question["resolved_model_id"],
+                            question["resolved_provider"],
                             json.dumps(warnings, separators=(",", ":")),
                             changed_at,
                         ),
@@ -1210,6 +1236,7 @@ class SellerReplyService:
             "mode": row["mode"],
             "reply_text": row["reply_text"],
             "created_at": row["created_at"],
+            "runtime_selection": _runtime_identity(row),
         }
         receipt = {
             "receipt_id": row["receipt_id"],
@@ -1225,6 +1252,7 @@ class SellerReplyService:
             "broker_outcome": row["broker_outcome"],
             "guardrail_verdict": row["guardrail_verdict"],
             "created_at": row["created_at"],
+            "runtime_selection": _runtime_identity(row),
         }
         return {
             "status": "sent",
@@ -1304,6 +1332,7 @@ def copilot_projection(
                     else None
                 ),
                 "canonical_question_id": row["canonical_question_id"],
+                "runtime_selection": _runtime_identity(row),
                 "suggestion": suggestion,
             }
         )
@@ -1316,6 +1345,7 @@ def copilot_projection(
                 "evidence_ids": json.loads(row["evidence_ids_json"]),
                 "validated_versions": json.loads(row["validated_versions_json"]),
                 "warnings": json.loads(row["warnings_json"]),
+                "runtime_selection": _runtime_identity(row),
             }
             for row in receipts
         ],
@@ -1327,6 +1357,22 @@ def copilot_projection(
             "updated_by": capability_row["updated_by"],
             "updated_at": capability_row["updated_at"],
         },
+    }
+
+
+def _runtime_identity(row) -> Optional[dict]:
+    if row["workflow_id"] is None:
+        return None
+    return {
+        "workflow_id": row["workflow_id"],
+        "model_profile_id": row["model_profile_id"],
+        "requested_model_id": row["requested_model_id"],
+        "model_config_ref": row["model_config_ref"],
+        "provider": row["model_provider"],
+        "selection_version": row["selection_version"],
+        "sample_phase": row["sample_phase"],
+        "resolved_model_id": row["resolved_model_id"],
+        "resolved_provider": row["resolved_provider"],
     }
 
 

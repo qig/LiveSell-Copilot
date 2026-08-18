@@ -110,6 +110,7 @@ def test_replay_rejects_oracle_quota_or_route_tampering_after_rehash(
     )
     parent["expected_bucket"] = "prompt_injection"
     parent["expected_route"] = "adversarial"
+    parent["expected_semantic"] = None
     (output / "oracle.json").write_text(
         json.dumps(oracle, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
         encoding="utf-8",
@@ -120,12 +121,29 @@ def test_replay_rejects_oracle_quota_or_route_tampering_after_rehash(
         LivesellReplay(output)
 
 
+def test_replay_rejects_semantic_oracle_tampering_after_rehash(tmp_path: Path) -> None:
+    output = _run(tmp_path)
+    oracle = json.loads((output / "oracle.json").read_text(encoding="utf-8"))
+    answerable = next(
+        item for item in oracle["events"] if item["expected_bucket"] == "answerable_parent"
+    )
+    answerable["expected_semantic"]["answer_category"] = "shipping"
+    (output / "oracle.json").write_text(
+        json.dumps(oracle, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    _rehash(output, "oracle.json", "oracle_digest")
+
+    with pytest.raises(ReplayArtifactError, match=r"semantic oracle mismatch"):
+        LivesellReplay(output)
+
+
 def test_replay_rejects_duplicate_json_keys(tmp_path: Path) -> None:
     output = _run(tmp_path)
     manifest = (output / "manifest.json").read_text(encoding="utf-8")
     manifest = manifest.replace(
-        '"schema_version":"sidestage.livesell_manifest.v1",',
-        '"schema_version":"sidestage.livesell_manifest.v1","schema_version":"sidestage.livesell_manifest.v1",',
+        '"schema_version":"sidestage.livesell_manifest.v2",',
+        '"schema_version":"sidestage.livesell_manifest.v2","schema_version":"sidestage.livesell_manifest.v2",',
     )
     (output / "manifest.json").write_text(manifest, encoding="utf-8")
 

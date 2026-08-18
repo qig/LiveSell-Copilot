@@ -1,0 +1,103 @@
+{
+  "schema_version": "sidestage.runtime_model_profiles.v1",
+  "profiles": [
+    {
+      "profile_id": "openai-luna",
+      "display_name": "GPT-5.6 Luna · none",
+      "provider": "openai",
+      "requested_model_id": "gpt-5.6-luna",
+      "model_config_ref": "sidestage-openai-luna-v1",
+      "reasoning_effort": "none",
+      "request_timeout_s": 5.0,
+      "supported_workflows": ["one_call_template", "two_call_draft"],
+      "api_key_env": "OPENAI_API_KEY",
+      "enabled": true
+    },
+    {
+      "profile_id": "openai-luna-low",
+      "display_name": "GPT-5.6 Luna · low",
+      "provider": "openai",
+      "requested_model_id": "gpt-5.6-luna",
+      "model_config_ref": "sidestage-openai-luna-low-v1",
+      "reasoning_effort": "low",
+      "request_timeout_s": 5.0,
+      "supported_workflows": ["one_call_template", "two_call_draft"],
+      "api_key_env": "OPENAI_API_KEY",
+      "enabled": true
+    },
+    {
+      "profile_id": "openai-luna-priority-none",
+      "display_name": "GPT-5.6 Luna · none · priority",
+      "provider": "openai",
+      "requested_model_id": "gpt-5.6-luna",
+      "model_config_ref": "sidestage-openai-luna-priority-none-v1",
+      "reasoning_effort": "none",
+      "service_tier": "priority",
+      "request_timeout_s": 5.0,
+      "supported_workflows": ["one_call_template", "two_call_draft"],
+      "api_key_env": "OPENAI_API_KEY",
+      "enabled": true
+    },
+    {
+      "profile_id": "openrouter-gemini-3-7-flash-low",
+      "display_name": "Gemini 3.7 Flash · low",
+      "provider": "openrouter",
+      "requested_model_id": "google/gemini-3.7-flash",
+      "model_config_ref": "sidestage-openrouter-gemini-3-7-flash-low-v1",
+      "reasoning_effort": "low",
+      "request_timeout_s": 5.0,
+      "supported_workflows": ["one_call_template", "two_call_draft"],
+      "api_key_env": "OPENROUTER_API_KEY",
+      "enabled": true
+    },
+    {
+      "profile_id": "openrouter-gemini-3-5-flash-lite-minimal",
+      "display_name": "Gemini 3.5 Flash-Lite · minimal",
+      "provider": "openrouter",
+      "requested_model_id": "google/gemini-3.5-flash-lite",
+      "model_config_ref": "sidestage-openrouter-gemini-3-5-flash-lite-minimal-v1",
+      "reasoning_effort": "minimal",
+      "request_timeout_s": 5.0,
+      "supported_workflows": ["one_call_template", "two_call_draft"],
+      "api_key_env": "OPENROUTER_API_KEY",
+      "enabled": true
+    },
+    {
+      "profile_id": "openrouter-deepseek-v4-flash",
+      "display_name": "DeepSeek V4 Flash",
+      "provider": "openrouter",
+      "requested_model_id": "deepseek/deepseek-v4-flash-0731",
+      "model_config_ref": "sidestage-openrouter-deepseek-v4-flash-v1",
+      "reasoning_effort": "low",
+      "request_timeout_s": 5.0,
+      "supported_workflows": ["one_call_template"],
+      "api_key_env": "OPENROUTER_API_KEY",
+      "enabled": true
+    },
+    {
+      "profile_id": "openrouter-kimi-k3",
+      "display_name": "Kimi K3",
+      "provider": "openrouter",
+      "requested_model_id": "moonshotai/kimi-k3",
+      "model_config_ref": "sidestage-openrouter-kimi-k3-v1",
+      "reasoning_effort": "low",
+      "request_timeout_s": 5.0,
+      "supported_workflows": ["one_call_template"],
+      "api_key_env": "OPENROUTER_API_KEY",
+      "enabled": true
+    },
+    {
+      "profile_id": "openrouter-glm-5-2-diagnostic",
+      "display_name": "GLM 5.2 — incompatible diagnostic",
+      "provider": "openrouter",
+      "requested_model_id": "z-ai/glm-5.2",
+      "model_config_ref": "sidestage-openrouter-glm-5-2-v1",
+      "reasoning_effort": "none",
+      "request_timeout_s": 5.0,
+      "supported_workflows": [],
+      "api_key_env": "OPENROUTER_API_KEY",
+      "enabled": false,
+      "disabled_reason": "strict_tool_compatibility_failed"
+    }
+  ]
+}

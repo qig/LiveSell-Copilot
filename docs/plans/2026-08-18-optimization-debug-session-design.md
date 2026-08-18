@@ -1,6 +1,6 @@
 # Optimization and Debug Session Design
 
-> Status: `Accepted`; not yet `Implemented`, `Verified`, or `Measured`
+> Status: `Implemented` in the current uncommitted tree; pre-commit deterministic and browser checks pass, but commit-bound `Verified` and live `Measured` evidence remain pending
 >
 > Date: 2026-08-18
 >
@@ -31,7 +31,7 @@ M3A remains unchanged. `AgentProfileRegistry` and every registered terminal sche
 SideStage adds two bounded startup catalogs:
 
 1. A workflow catalog containing only `one_call_template` and `two_call_draft`.
-2. A model catalog containing approved public profile ID, provider, exact requested model ID, sanitized configuration reference, reasoning setting, timeout, and supported workflows.
+2. A model catalog containing approved public profile ID, provider, exact requested model ID, sanitized configuration reference, reasoning setting, optional direct-OpenAI service tier, timeout, and supported workflows.
 
 Startup validates all entries and builds reusable runners and workflow handles. The runtime selector resolves a compatible pair from those immutable entries. It is not a general workflow engine, plugin system, or runtime registration API.
 
@@ -85,3 +85,11 @@ The implementation gate requires deterministic proof of:
 - Correct cold-marker consumption and cold/steady/combined latency calculations.
 
 Live results remain diagnostic until a committed configuration, fixed workload, exact model/provider identity, and retained artifact satisfy the M3B.6 evidence gate.
+
+## Implementation snapshot
+
+The current uncommitted tree implements this boundary in `src/sidestage/copilot/runtime.py`, `src/sidestage/trace/runtime_metrics.py`, `src/sidestage/app.py`, the SQLite projections, and the two static browser surfaces. `config/runtime_model_profiles.json` is the credential-free live catalog; the ignored `.env` remains the only source of provider secrets. Deterministic coverage is concentrated in `tests/unit/test_runtime_selection.py`, `tests/integration/test_runtime_switching.py`, `tests/integration/test_live_app_factory.py`, the R3 receipt suite, and `tests/e2e/test_debugger.py`.
+
+The catalog treats provider, exact model, reasoning effort, and service tier as one immutable profile identity. Direct OpenAI Luna exposes standard `none`, standard `low`, and priority `none` profiles; `service_tier=priority` is independent of reasoning. OpenRouter Gemini 3.7 Flash `low` and Gemini 3.5 Flash-Lite `minimal` are separate candidates. OpenRouter reasoning uses the router's unified `reasoning.effort` envelope, and an OpenAI service tier on an OpenRouter profile is rejected before startup.
+
+The exact full offline command `.venv/bin/pytest -q -m 'not live_model'` passed with `300 passed, 5 deselected in 53.98s`, including the localhost Playwright/server checks. The browser regressions switch to a second model profile in the debugger, return to the seller workspace, observe the exact friendly profile name plus selection version in the read-only badge, and prove that show controls are inert while a seller-session change is pending. This supports `Implemented`, not commit-bound `Verified`. A credential-safe startup check of the builder's current `.env` failed because it contains `OPEN_API_KEY` rather than `OPENAI_API_KEY` and omits `SIDESTAGE_MODEL_ID`. A command-scoped alias allowed an earlier test to switch the show to Kimi version 2 and reach OpenRouter, but that request failed closed on HTTP 429; a successful live switched response is not claimed.

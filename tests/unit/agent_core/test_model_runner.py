@@ -342,6 +342,7 @@ def test_openai_compatible_runner_maps_one_http_request() -> None:
             request_timeout_s=3.0,
             strict_function_tools=True,
             reasoning_effort="none",
+            service_tier="priority",
         ),
         http_client=client,
     )
@@ -359,6 +360,7 @@ def test_openai_compatible_runner_maps_one_http_request() -> None:
     assert request["json"]["parallel_tool_calls"] is False
     assert request["json"]["stream"] is False
     assert request["json"]["reasoning_effort"] == "none"
+    assert request["json"]["service_tier"] == "priority"
     assert [message["role"] for message in request["json"]["messages"]] == [
         "system",
         "user",
@@ -456,6 +458,7 @@ def test_openrouter_request_disables_fallbacks_and_records_sanitized_routing_met
             model_id="deepseek/deepseek-chat-v3.1",
             request_timeout_s=3.0,
             strict_function_tools=True,
+            reasoning_effort="low",
             openrouter_routing=OpenRouterRoutingConfig(),
         ),
         http_client=client,
@@ -466,6 +469,8 @@ def test_openrouter_request_disables_fallbacks_and_records_sanitized_routing_met
     request = client.requests[0]
     assert request["headers"]["X-OpenRouter-Metadata"] == "enabled"
     assert "parallel_tool_calls" not in request["json"]
+    assert "reasoning_effort" not in request["json"]
+    assert request["json"]["reasoning"] == {"effort": "low"}
     assert request["json"]["provider"] == {
         "allow_fallbacks": False,
         "require_parameters": True,
@@ -615,4 +620,19 @@ def test_openai_compatible_runner_omits_unspecified_reasoning_effort() -> None:
     )
 
     assert config.reasoning_effort is None
+    assert config.service_tier is None
     assert config.strict_function_tools is False
+
+
+def test_openrouter_config_rejects_openai_service_tier() -> None:
+    with pytest.raises(ValidationError, match="service_tier"):
+        OpenAICompatibleModelConfig(
+            config_ref="invalid-openrouter-priority-v1",
+            base_url="https://openrouter.ai/api/v1",
+            api_key=SecretStr("credential-must-not-leak"),
+            model_id="google/gemini-3.7-flash",
+            request_timeout_s=3.0,
+            reasoning_effort="low",
+            service_tier="priority",
+            openrouter_routing=OpenRouterRoutingConfig(),
+        )

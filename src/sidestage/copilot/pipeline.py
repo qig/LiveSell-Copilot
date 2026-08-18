@@ -25,6 +25,7 @@ from sidestage.copilot.retrieval import (
     RetrievalStatus,
     TemplateRetrievalContext,
 )
+from sidestage.copilot.runtime import RuntimeCatalog, RuntimeSelection, RuntimeSelector
 from sidestage.copilot.scheduling import (
     WorkQueueDeadlineError,
     WorkQueueFullError,
@@ -81,6 +82,8 @@ class PipelineResult(BaseModel):
     broker_decision: Optional[BrokerDecision] = None
     publication: Optional[Dict[str, Any]] = None
     latency: Optional[PipelineLatency] = None
+    runtime_selection: Optional[RuntimeSelection] = None
+    sample_phase: Optional[Literal["cold", "steady"]] = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +103,8 @@ class PipelineServices:
     trace_id_factory: Callable[[], str] = lambda: f"trc_{uuid4().hex}"
     hard_timeout_s: float = 5.0
     workflow: Optional[TemplateWorkflow | TwoCallWorkflow] = None
+    runtime_catalog: Optional[RuntimeCatalog] = None
+    runtime_selector: Optional[RuntimeSelector] = None
 
 
 async def process_customer_reply(
@@ -114,20 +119,74 @@ async def process_customer_reply(
     accepted_monotonic_s: Optional[float] = None
     work_ticket = None
     queue_ms = 0.0
+    runtime_selection: Optional[RuntimeSelection] = None
     context: dict[str, Any] = {
         "trace_id": trace_id,
         "seller_id": raw_event.authority.seller_id,
         "show_id": raw_event.authority.show_id,
     }
+    selected_workflow = services.workflow
     template_workflow = (
-        services.workflow if isinstance(services.workflow, TemplateWorkflow) else None
+        selected_workflow if isinstance(selected_workflow, TemplateWorkflow) else None
     )
     two_call_workflow = (
-        services.workflow if isinstance(services.workflow, TwoCallWorkflow) else None
+        selected_workflow if isinstance(selected_workflow, TwoCallWorkflow) else None
     )
+
+    def configure_runtime(selection: RuntimeSelection) -> None:
+        nonlocal runtime_selection, selected_workflow, template_workflow, two_call_workflow
+        runtime_selection = selection
+        selected_workflow = services.runtime_catalog.resolve(
+            runtime_selection.workflow_id,
+            runtime_selection.model_profile_id,
+        ).workflow
+        context.update(
+            {
+                "workflow_id": runtime_selection.workflow_id,
+                "model_profile_id": runtime_selection.model_profile_id,
+                "selection_version": runtime_selection.selection_version,
+            }
+        )
+        template_workflow = (
+            selected_workflow if isinstance(selected_workflow, TemplateWorkflow) else None
+        )
+        two_call_workflow = (
+            selected_workflow if isinstance(selected_workflow, TwoCallWorkflow) else None
+        )
+        context["workflow_strategy"] = (
+            "one_call_template" if template_workflow is not None else "two_call_draft"
+        )
+
     context["workflow_strategy"] = (
         "one_call_template" if template_workflow is not None else "two_call_draft"
     )
+
+    def claim_model_sample(question_id: str) -> Optional[str]:
+        if runtime_selection is None or services.runtime_selector is None:
+            return None
+        sample_phase = services.runtime_selector.claim_model_sample(runtime_selection)
+        context["sample_phase"] = sample_phase
+        services.router.record_runtime_execution(
+            question_id,
+            sample_phase=sample_phase,
+        )
+        return sample_phase
+
+    def record_resolved_model(question_id: str, result) -> None:
+        if runtime_selection is None or context.get("sample_phase") is None:
+            return
+        metadata_value = result.provider_metadata
+        metadata = (
+            metadata_value.to_dict()
+            if hasattr(metadata_value, "to_dict")
+            else dict(metadata_value)
+        )
+        services.router.record_runtime_execution(
+            question_id,
+            sample_phase=context["sample_phase"],
+            resolved_model_id=metadata.get("resolved_model_id") or result.model_id,
+            resolved_provider=metadata.get("resolved_provider"),
+        )
 
     def skip_after(stage: TraceStage, reason_code: str) -> None:
         stages = list(TraceStage)
@@ -196,6 +255,12 @@ async def process_customer_reply(
         if work_ticket is not None and services.work_scheduler is not None:
             services.work_scheduler.release(work_ticket)
             work_ticket = None
+        result = result.model_copy(
+            update={
+                "runtime_selection": runtime_selection,
+                "sample_phase": context.get("sample_phase"),
+            }
+        )
         if accepted_monotonic_s is None:
             return result
         total_ms = max(0.0, (services.monotonic() - accepted_monotonic_s) * 1_000)
@@ -218,32 +283,58 @@ async def process_customer_reply(
             TraceStage.RESULT,
             trace_id=trace_id,
             artifact_kind="end_to_end_latency",
-            payload=latency.model_dump(mode="json"),
+            payload={
+                **latency.model_dump(mode="json"),
+                "workflow_id": context.get("workflow_id"),
+                "model_profile_id": context.get("model_profile_id"),
+                "selection_version": context.get("selection_version"),
+                "sample_phase": context.get("sample_phase"),
+            },
         )
         return result.model_copy(update={"latency": latency})
 
     # 1. Authoritative ingestion.
-    span = services.trace_recorder.start(
-        TraceStage.INGEST,
-        **context,
-        input_ref=f"raw:{raw_event.input_origin}",
-    )
+    span = None
     try:
-        event = services.ingestor.ingest(
-            raw_event.authority,
-            customer_display_name=raw_event.customer_display_name,
-            raw_text=raw_event.raw_text,
-            input_origin=raw_event.input_origin,
-            trace_id=trace_id,
-        )
+        if services.runtime_catalog is not None and services.runtime_selector is not None:
+            with services.runtime_selector.acceptance(raw_event.authority) as selection:
+                configure_runtime(selection)
+                span = services.trace_recorder.start(
+                    TraceStage.INGEST,
+                    **context,
+                    input_ref=f"raw:{raw_event.input_origin}",
+                )
+                event = services.ingestor.ingest(
+                    raw_event.authority,
+                    customer_display_name=raw_event.customer_display_name,
+                    raw_text=raw_event.raw_text,
+                    input_origin=raw_event.input_origin,
+                    trace_id=trace_id,
+                    runtime_selection=runtime_selection,
+                )
+        else:
+            span = services.trace_recorder.start(
+                TraceStage.INGEST,
+                **context,
+                input_ref=f"raw:{raw_event.input_origin}",
+            )
+            event = services.ingestor.ingest(
+                raw_event.authority,
+                customer_display_name=raw_event.customer_display_name,
+                raw_text=raw_event.raw_text,
+                input_origin=raw_event.input_origin,
+                trace_id=trace_id,
+                runtime_selection=runtime_selection,
+            )
     except Exception:
-        span.failed(reason_code="ingest_failed", verdict="failed")
+        if span is not None:
+            span.failed(reason_code="ingest_failed", verdict="failed")
         skip_after(TraceStage.INGEST, "ingest_failed")
-        return PipelineResult(
+        return finalize(PipelineResult(
             trace_id=trace_id,
             status=PipelineStatus.FAILED,
             reason_code="ingest_failed",
-        )
+        ))
     context["event_id"] = event.event_id
     accepted_monotonic_s = services.monotonic()
     deadline = accepted_monotonic_s + services.hard_timeout_s
@@ -252,6 +343,13 @@ async def process_customer_reply(
         output_ref=event.event_id,
         verdict="accepted",
     )
+    if runtime_selection is not None:
+        services.trace_recorder.artifact(
+            TraceStage.INGEST,
+            trace_id=trace_id,
+            artifact_kind="runtime_selection",
+            payload=runtime_selection.model_dump(mode="json"),
+        )
 
     # 2. Normalization and exact/normalization-equivalent deduplication.
     span = services.trace_recorder.start(
@@ -372,6 +470,8 @@ async def process_customer_reply(
 
     # 4. Workflow 1 prepares a deterministic evidence plan; Workflow 2 invokes
     # its registered evidence-planner agent exactly once.
+    if template_workflow is None:
+        claim_model_sample(routing.question_id)
     span = services.trace_recorder.start(
         TraceStage.LLM_ANALYSIS,
         **context,
@@ -431,6 +531,7 @@ async def process_customer_reply(
             verdict="deterministic_bundle_planned",
         )
     else:
+        record_resolved_model(routing.question_id, analysis)
         services.trace_recorder.artifact(
             TraceStage.LLM_ANALYSIS,
             trace_id=trace_id,
@@ -617,6 +718,8 @@ async def process_customer_reply(
             if two_call_workflow is not None
             else services.reply_agent
         )
+    if template_workflow is not None:
+        claim_model_sample(routing.question_id)
     span = services.trace_recorder.start(
         TraceStage.REPLY_AGENT,
         **context,
@@ -645,6 +748,7 @@ async def process_customer_reply(
         ))
     context["agent_run_id"] = agent_result.run_id
     context["profile_digest"] = agent_result.profile_digest
+    record_resolved_model(routing.question_id, agent_result)
     services.trace_recorder.artifact(
         TraceStage.REPLY_AGENT,
         trace_id=trace_id,

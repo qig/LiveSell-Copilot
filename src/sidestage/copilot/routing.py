@@ -22,7 +22,7 @@ from sidestage.fixtures.loader import SellerCatalog
 from sidestage.storage.database import MarketplaceDatabase
 from sidestage.streaming.ingest import AcceptedChatEvent
 
-
+# TODO: this can be expanded from an external "db of noises". Def need optimization.
 _DETERMINISTIC_NOISE_PHRASES = frozenset(
     {
         "hello",
@@ -443,8 +443,11 @@ class CopilotRouter:
                    normalized_text, canonical_key, canonical_scope,
                    canonical_question_id, route, state, reason_code,
                    bound_epoch_id, bound_listing_id, bound_sku,
-                   binding_basis, binding_status, asked_at, state_changed_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   binding_basis, binding_status, workflow_id, model_profile_id,
+                   requested_model_id, model_config_ref, model_provider,
+                   selection_version, selection_selected_at,
+                   asked_at, state_changed_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 question_id,
                 event.event_id,
@@ -463,10 +466,39 @@ class CopilotRouter:
                 bound_listing.sku if bound_listing else None,
                 bound_listing.binding_basis.value if bound_listing else None,
                 bound_listing.binding_status.value if bound_listing else None,
+                event.workflow_id,
+                event.model_profile_id,
+                event.requested_model_id,
+                event.model_config_ref,
+                event.model_provider,
+                event.selection_version,
+                event.selection_selected_at,
                 event.accepted_at,
                 event.accepted_at,
             ),
         )
+
+    def record_runtime_execution(
+        self,
+        question_id: str,
+        *,
+        sample_phase: str,
+        resolved_model_id: Optional[str] = None,
+        resolved_provider: Optional[str] = None,
+    ) -> None:
+        """Attach model-backed execution identity without changing question state."""
+
+        with self.database.transaction() as connection:
+            cursor = connection.execute(
+                """UPDATE copilot_questions
+                   SET sample_phase = ?,
+                       resolved_model_id = COALESCE(?, resolved_model_id),
+                       resolved_provider = COALESCE(?, resolved_provider)
+                   WHERE question_id = ?""",
+                (sample_phase, resolved_model_id, resolved_provider, question_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(question_id)
 
     def _finalize_decision(
         self,
