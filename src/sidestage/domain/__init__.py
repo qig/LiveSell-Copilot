@@ -1,0 +1,1 @@
+"""Typed SideStage domain contracts."""
