@@ -22,6 +22,21 @@ from sidestage.agent_core.profile import (
     UnknownAgentProfileError,
     register_profile,
 )
+from sidestage.agent_core.core import StaticAgentCore
+from sidestage.agent_core.model import (
+    ModelInvocation,
+    ModelResponse,
+    ModelRunner,
+    ModelRunnerError,
+    ModelTerminalCall,
+    OpenAICompatibleModelConfig,
+    OpenAICompatibleModelRunner,
+    ScriptedModelRunner,
+)
+from sidestage.agent_core.terminal import (
+    TerminalResponseError,
+    decode_terminal_response,
+)
 
 __all__ = [
     "AgentProfile",
@@ -34,12 +49,23 @@ __all__ = [
     "CoreFailureCode",
     "DeadlinePolicy",
     "LatencyBreakdown",
+    "ModelInvocation",
     "ModelRequestProjection",
+    "ModelResponse",
+    "ModelRunner",
+    "ModelRunnerError",
+    "ModelTerminalCall",
+    "OpenAICompatibleModelConfig",
+    "OpenAICompatibleModelRunner",
     "QueuePolicy",
     "RegisteredAgentProfile",
     "RunStatus",
+    "ScriptedModelRunner",
+    "StaticAgentCore",
     "TerminalIntent",
+    "TerminalResponseError",
     "TerminalToolSchema",
     "UnknownAgentProfileError",
+    "decode_terminal_response",
     "register_profile",
 ]
