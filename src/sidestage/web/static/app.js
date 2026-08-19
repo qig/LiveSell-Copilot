@@ -244,7 +244,7 @@
     );
     eventSource.onopen = () => {
       dom.streamChip.classList.add("is-running");
-      dom.streamStatus.textContent = streamTimer ? "Fixture playing" : "Live sync";
+      dom.streamStatus.textContent = streamTimer ? "Mock livesell running" : "Live sync";
     };
     eventSource.onerror = () => {
       dom.streamChip.classList.remove("is-running");
@@ -779,7 +779,7 @@
       await refreshSnapshot();
     } catch (error) {
       stopFixture();
-      showNotice("Prepared stream stopped", error.message, {error: true});
+      showNotice("Mock livesell stopped", error.message, {error: true});
     } finally {
       renderFixtureState();
     }
@@ -805,8 +805,8 @@
       streamTimer = null;
     }
     const playing = Boolean(streamTimer);
-    dom.streamStatus.textContent = playing ? "Fixture playing" : eventSource ? "Live sync" : "Room ready";
-    dom.toggleStream.querySelector("span").textContent = playing ? "Pause fixture" : "Play fixture";
+    dom.streamStatus.textContent = playing ? "Mock livesell running" : eventSource ? "Live sync" : "Room ready";
+    dom.toggleStream.querySelector("span").textContent = playing ? "Pause mock livesell" : "Mock livesell";
     dom.toggleStream.querySelector("svg").innerHTML = playing
       ? '<path d="M8 5h3v14H8zM14 5h3v14h-3z" />'
       : '<path d="M8 5v14l11-7z" />';
@@ -814,7 +814,7 @@
     dom.stepStream.disabled = !canChat;
     dom.burstStream.disabled = !canChat || !demoCapabilities.prepared_burst;
     if (demoCapabilities.challenge_mode) {
-      dom.toggleStream.title = "Continuous prepared traffic is disabled in the shared challenge demo.";
+      dom.toggleStream.title = "Simulates one buyer message every 1.65 seconds; Agent Core queues work FIFO.";
       dom.burstStream.title = "Prepared bursts are disabled in the shared challenge demo.";
     }
     dom.chatInput.disabled = !canChat;

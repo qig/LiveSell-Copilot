@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from hashlib import sha256
 import inspect
 import json
 import os
@@ -11,8 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock
-from typing import Callable, Dict, Literal, Optional, Sequence
+from typing import Callable, Literal, Optional, Sequence
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Query
@@ -119,10 +119,16 @@ class DemoSession:
 
 
 class DemoSessionRegistry:
-    def __init__(self, catalog: SellerCatalog) -> None:
+    def __init__(
+        self,
+        catalog: SellerCatalog,
+        database: MarketplaceDatabase,
+        *,
+        wall_clock: WallClock,
+    ) -> None:
         self.catalog = catalog
-        self._sessions: Dict[str, DemoSession] = {}
-        self._lock = Lock()
+        self.database = database
+        self.wall_clock = wall_clock
 
     def issue(self, seller_id: str) -> DemoSession:
         try:
@@ -138,16 +144,50 @@ class DemoSessionRegistry:
                 actor_id=f"demo_{seller_id.removeprefix('sel_')}",
             ),
         )
-        with self._lock:
-            self._sessions[token] = session
+        with self.database.transaction() as connection:
+            connection.execute(
+                """INSERT INTO demo_sessions(
+                       session_token_digest, seller_id, show_id, actor_id, issued_at
+                   ) VALUES (?, ?, ?, ?, ?)""",
+                (
+                    _session_token_digest(token),
+                    session.authority.seller_id,
+                    session.authority.show_id,
+                    session.authority.actor_id,
+                    _utc_millis(self.wall_clock()),
+                ),
+            )
         return session
 
     def require(self, token: str) -> DemoSession:
-        with self._lock:
-            session = self._sessions.get(token)
-        if session is None:
+        with self.database.read() as connection:
+            row = connection.execute(
+                """SELECT seller_id, show_id, actor_id
+                   FROM demo_sessions
+                   WHERE session_token_digest = ?""",
+                (_session_token_digest(token),),
+            ).fetchone()
+        if row is None:
             raise HTTPException(status_code=404, detail="unknown or expired demo session")
-        return session
+        seller_id = str(row["seller_id"])
+        try:
+            self.catalog.seller(seller_id)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404, detail="unknown or expired demo session"
+            ) from error
+        expected_show_id = f"show_{seller_id.removeprefix('sel_')}"
+        expected_actor_id = f"demo_{seller_id.removeprefix('sel_')}"
+        if row["show_id"] != expected_show_id or row["actor_id"] != expected_actor_id:
+            raise HTTPException(status_code=404, detail="unknown or expired demo session")
+        return DemoSession(
+            token=token,
+            authority=SellerAuthority(
+                seller_id=seller_id,
+                show_id=expected_show_id,
+                actor_id=expected_actor_id,
+            ),
+        )
 
 
 def create_app(
@@ -234,7 +274,7 @@ def create_app(
         wall_clock=clock,
     )
     prepared = PreparedChatSource(seed=prepared_seed)
-    sessions = DemoSessionRegistry(catalog)
+    sessions = DemoSessionRegistry(catalog, database, wall_clock=clock)
     demo_mutation_gate = DemoMutationGate()
     demo_reset_service = DemoResetService(
         database,
@@ -390,7 +430,7 @@ def create_app(
         return {
             "demo_capabilities": {
                 "challenge_mode": challenge_config is not None,
-                "prepared_stream": challenge_config is None,
+                "prepared_stream": True,
                 "prepared_burst": challenge_config is None,
                 "runtime_mutable": challenge_config is None,
             },
@@ -1032,7 +1072,7 @@ def create_live_app(
 
 def create_challenge_app(
     *,
-    database_path: Path = DEFAULT_RUNTIME_DATABASE,
+    database_path: Optional[Path] = None,
     wall_clock: Optional[WallClock] = None,
     monotonic_clock: Callable[[], float] = time.monotonic,
     prepared_seed: int = 20260817,
@@ -1040,6 +1080,9 @@ def create_challenge_app(
     """Build the access-protected, cost-bounded AI Fund challenge application."""
 
     challenge_config = ChallengeDeploymentConfig.from_environment()
+    resolved_database_path = database_path or Path(
+        os.environ.get("SIDESTAGE_DATABASE_PATH", str(DEFAULT_RUNTIME_DATABASE))
+    )
     configured_base_url = os.environ.get("SIDESTAGE_MODEL_BASE_URL")
     if (
         configured_base_url is not None
@@ -1049,7 +1092,7 @@ def create_challenge_app(
             "challenge deployment only sends OPENAI_API_KEY to https://api.openai.com/v1"
         )
     application = create_live_app(
-        database_path=database_path,
+        database_path=resolved_database_path,
         wall_clock=wall_clock,
         monotonic_clock=monotonic_clock,
         prepared_seed=prepared_seed,
@@ -1322,3 +1365,7 @@ def _utc_millis(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace(
         "+00:00", "Z"
     )
+
+
+def _session_token_digest(token: str) -> str:
+    return sha256(token.encode("utf-8")).hexdigest()

@@ -372,6 +372,24 @@ Each entry must identify the proposal, disposition, reason, chosen alternative, 
 - **Implication:** Internal R2/R3 database and receipt names remain compatibility details. Automatic rendering expands across the registered trusted fact set without expanding model authority or marketplace-write authority. The pressure/safety oracle must treat broker-authorized replies as authorized rather than assuming all automatic writes are violations.
 - **Evidence:** Builder-observed seller-workspace defects, explicit decisions on 2026-08-18, DBG-027, and the regression coverage committed in `62a44ae`.
 
+### APR-041 — Serialize mock buyer input behind each completed model workflow
+
+- **Disposition:** Explicitly rejected as the wrong pressure model.
+- **Decision source:** Builder correction during challenge-demo review on 2026-08-18.
+- **Reason:** Waiting for each reply workflow to complete before accepting the next prepared buyer message would hide the Agent Core FIFO queue behavior and understate queue-inclusive latency. The independent core already owns FIFO admission, bounded concurrency, backpressure, and attribution.
+- **Chosen alternative:** Keep **Mock livesell** on the existing fixed 1.65-second cadence and submit exactly one prepared message per request. Let requests overlap and enter the registered Agent Core FIFO lane. Keep `Burst ×8` disabled in challenge mode, and stop playback visibly on session, quota, or endpoint failure.
+- **Implication:** The shared demo exercises real queue pressure without sending an eight-message batch or adding a second browser-side queue. The seller-facing fixture terminology is replaced by **Mock livesell**; internal prepared-event contracts remain unchanged.
+- **Evidence:** Explicit builder correction and focused red/green challenge/browser regressions on 2026-08-18.
+
+### APR-042 — Patch over Vercel session loss with client retry or a stateless token
+
+- **Disposition:** Explicitly rejected after the failure recurred during builder testing.
+- **Decision source:** Builder approval of the stateful deployment direction on 2026-08-18.
+- **Reason:** A client retry cannot prove whether the old chat POST committed and can duplicate an automatic reply. A signed stateless token would restore only identity while a different Vercel function still lacks the original listing, chat, quota, receipts, and SSE state. Neither approach restores one coherent show.
+- **Chosen alternative:** Persist opaque demo-session authority as a token digest in the authoritative SQLite database and deploy the complete challenge app as exactly one ASGI container with one persistent disk. Keep Vercel only as a short diagnostic preview. A future horizontally scaled topology must replace SQLite with shared transactional state and cross-instance notifications.
+- **Implication:** The reviewer deployment deliberately trades horizontal scale and zero-downtime deploys for coherent restart-safe prototype state. The raw token and provider credentials remain outside SQLite. Docker supplies a reproducible runtime; the Render Blueprint pins one paid instance and one disk.
+- **Evidence:** Repeated builder `unknown or expired demo session` observation; DBG-030; red/green app-restart regression; fresh-container mounted-disk restart smoke on 2026-08-18.
+
 ## Entry template
 
 ```md

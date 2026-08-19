@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.git
+.github
+.pytest_cache
+.venv
+.vercel
+AGENTS.md
+build
+dist
+docs
+runs
+tests
+var
+*.egg-info
+__pycache__
+*.py[cod]

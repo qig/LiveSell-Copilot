@@ -14,7 +14,7 @@ uv run uvicorn sidestage.app:create_app --factory --host 127.0.0.1 --port 8000
 
 Open [http://127.0.0.1:8000/app/](http://127.0.0.1:8000/app/). The debugger ledger is at [http://127.0.0.1:8000/app/debug.html](http://127.0.0.1:8000/app/debug.html).
 
-The browser holds only an opaque demo-session token. SQLite is authoritative for show, chat, listing, inventory, epoch, question, trace, reply, and receipt state; Server-Sent Events keep multiple projections synchronized. The current application includes the M3B Copilot Inbox, R2 review controls, bounded R3 controls, the persisted eight-stage debugger, and developer-only session Reset. Push a listing before sending prepared or custom buyer chat; without an active immutable listing epoch, both UI paths are disabled and the server returns typed `active_slot_empty` before model work. Open questions appear newest-first in **Now**, move to collapsed **Earlier** rows after twenty seconds, and leave the open Inbox when answered or dismissed. Durable R2/R3 replies appear in Live Chat with the exact source buyer quote.
+The browser holds only an opaque demo-session token. SQLite is authoritative for session authority, show, chat, listing, inventory, epoch, question, trace, reply, quota, and receipt state; only the SHA-256 token digest is stored. Server-Sent Events keep multiple projections synchronized. The current application includes the M3B Copilot Inbox, R2 review controls, bounded R3 controls, the persisted eight-stage debugger, and developer-only session Reset. Push a listing before sending prepared or custom buyer chat; without an active immutable listing epoch, both UI paths are disabled and the server returns typed `active_slot_empty` before model work. Open questions appear newest-first in **Now**, move to collapsed **Earlier** rows after twenty seconds, and leave the open Inbox when answered or dismissed. Durable R2/R3 replies appear in Live Chat with the exact source buyer quote.
 
 The `create_app` Uvicorn factory deliberately starts with a fail-closed empty scripted model runner unless a runner is injected by a test or harness. It still registers both closed workflows, which makes the UI, marketplace, and runtime selector safe to inspect without credentials.
 
@@ -59,9 +59,9 @@ Then run `uv run --env-file .env uvicorn sidestage.app:create_live_app --factory
 
 ## Share the protected challenge demo
 
-Use a dedicated OpenAI project key for the shared reviewer deployment. Do not reuse a personal development key. The challenge factory protects the complete page/API/debugger/SSE surface with server-side HTTP Basic authentication, fixes execution to `one_call_template`, loads only the configured provider/model, disables runtime mutation and prepared bursts, and reserves a SQLite-backed daily allowance before provider work.
+Use a dedicated OpenAI project key for the shared reviewer deployment. Do not reuse a personal development key. The challenge factory protects the complete page/API/debugger/SSE surface with server-side HTTP Basic authentication, fixes execution to `one_call_template`, loads only the configured provider/model, disables runtime mutation and prepared bursts, and reserves a SQLite-backed daily allowance before provider work. The seller UI's **Mock livesell** control remains available: it submits one prepared buyer message every 1.65 seconds, while the existing Agent Core FIFO lane owns queueing and latency; the `Burst ×8` control remains unavailable.
 
-Set these server-only deployment variables. In Vercel, mark the key and password as **Sensitive** and scope them to Production (and to Preview only when intentionally testing a protected preview):
+Set these server-only deployment variables. Mark the key and password as **Sensitive** in the selected host:
 
 ```bash
 OPENAI_API_KEY=dedicated-reviewer-key
@@ -79,11 +79,37 @@ Do not set `OPENROUTER_API_KEY`, `SIDESTAGE_RUNTIME_MODEL_CATALOG_PATH`, or `SID
 For a local protected smoke test:
 
 ```bash
+SIDESTAGE_DATABASE_PATH=var/stateful-demo/sidestage.sqlite3 \
 uv run --env-file .env uvicorn sidestage.app:create_challenge_app \
   --factory --host 127.0.0.1 --port 8000
 ```
 
-For the Vercel preview, import the GitHub repository, add the variables above in Project Settings, deploy, and open the generated URL. `api/index.py` uses `/tmp/sidestage.sqlite3` because Vercel Functions do not provide this prototype with a shared persistent SQLite volume. A cold start or another function instance can therefore reset or diverge synthetic show state. This is acceptable only as a clearly disclosed preview. The reliable reviewer deployment runs the same `create_challenge_app` factory as one stateful ASGI instance with a persistent SQLite path; moving the final URL to horizontally scaled Vercel Functions requires a shared database, session store, and SSE notification service.
+### Reliable reviewer deployment
+
+The supported reviewer topology is one stateful container with one persistent SQLite disk. [`Dockerfile`](Dockerfile) is the portable runtime, and [`render.yaml`](render.yaml) defines one paid Render Starter instance, a 1 GB disk mounted at `/var/data`, `/healthz` deployment checks, and the non-secret fixed challenge settings. Create a Render Blueprint from this repository, enter only the two `sync: false` values (`OPENAI_API_KEY` and `SIDESTAGE_DEMO_PASSWORD`), and wait for the health check to pass. The disk forces a single instance, so session authority, marketplace state, chat, quota, and durable SSE offsets survive process restarts and redeploys together. Keep the generated `onrender.com` URL private until review because application Basic Auth—not Render account SSO—is its access boundary.
+
+The image receives provider and reviewer credentials only at container runtime. `.dockerignore` excludes `.env`, Git metadata, repository instructions, internal docs, tests, run artifacts, and local state from the build context; none is copied into the image layers.
+
+For a reproducible localhost container, export the same server-only variables, then run:
+
+```bash
+docker build --tag sidestage-challenge:local .
+mkdir -p var/stateful-demo
+docker run --detach --name sidestage-local --restart unless-stopped \
+  --publish 127.0.0.1:8768:8000 \
+  --volume "$PWD/var/stateful-demo:/var/data" \
+  --env OPENAI_API_KEY \
+  --env SIDESTAGE_MODEL_PROVIDER \
+  --env SIDESTAGE_MODEL_ID \
+  --env SIDESTAGE_MODEL_REASONING_EFFORT \
+  --env SIDESTAGE_DEMO_USERNAME \
+  --env SIDESTAGE_DEMO_PASSWORD \
+  --env SIDESTAGE_DEMO_MAX_REQUESTS_PER_SESSION \
+  --env SIDESTAGE_DEMO_MAX_REQUESTS_PER_DAY \
+  sidestage-challenge:local
+```
+
+The Vercel adapter remains available only for short routing and UI diagnostics. Vercel's current FastAPI runtime detects `api/index.py` directly; do not add a catch-all rewrite. Its `/tmp/sidestage.sqlite3` is neither durable nor shared, so a cold start or another function instance can lose or fork the session, listing, chat, quota, and SSE state even though session records are now stored in SQLite. Do not use that URL as the reviewer prototype. A horizontally scaled Vercel release requires a shared transactional database plus cross-instance notifications.
 
 Give reviewers the URL plus the shared username/password in the submission's **Access notes**. Keep the source repository free of credentials, monitor the dedicated OpenAI project, and rotate or delete its key after judging.
 

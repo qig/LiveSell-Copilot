@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -118,7 +119,7 @@ def test_challenge_auth_protects_static_api_debugger_and_sse_boundaries(
         ).status_code == 404
 
 
-def test_challenge_runtime_is_one_call_read_only_and_burst_is_disabled(
+def test_challenge_runtime_is_one_call_read_only_with_mock_stream_and_no_burst(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -130,6 +131,14 @@ def test_challenge_runtime_is_one_call_read_only_and_burst_is_disabled(
 
     with TestClient(application) as client:
         client.auth = ("ai-fund-reviewer", "shared-password-must-never-be-reflected")
+        capabilities = client.get("/api/sellers").json()["demo_capabilities"]
+        assert capabilities == {
+            "challenge_mode": True,
+            "prepared_stream": True,
+            "prepared_burst": False,
+            "runtime_mutable": False,
+        }
+
         created = client.post(
             "/api/demo/sessions", json={"seller_id": "sel_velocity_kicks"}
         )
@@ -269,6 +278,90 @@ def test_challenge_endpoint_rejects_before_provider_work_when_quota_is_exhausted
         assert provider_called is False
 
 
+def test_challenge_session_and_marketplace_state_survive_app_restart(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_challenge(monkeypatch)
+    database_path = tmp_path / "persistent-challenge.sqlite3"
+    auth = ("ai-fund-reviewer", "shared-password-must-never-be-reflected")
+
+    with TestClient(create_challenge_app(database_path=database_path)) as first_client:
+        first_client.auth = auth
+        created = first_client.post(
+            "/api/demo/sessions", json={"seller_id": "sel_velocity_kicks"}
+        )
+        assert created.status_code == 201
+        token = created.json()["session_token"]
+        pushed = first_client.post(
+            f"/api/sessions/{token}/actions/push",
+            headers={"Idempotency-Key": "persistent-challenge-push"},
+            json={
+                "target_listing_id": "lst_velocity_aero_dash",
+                "expected_show_version": 1,
+            },
+        )
+        assert pushed.status_code == 200
+        assert pushed.json()["snapshot"]["show"]["active_listing_id"] == (
+            "lst_velocity_aero_dash"
+        )
+        greeted = first_client.post(
+            f"/api/sessions/{token}/chat/custom",
+            json={"raw_text": "hello"},
+        )
+        assert greeted.status_code == 201
+        assert greeted.json()["demo_usage"]["session_remaining"] == 19
+
+    with TestClient(create_challenge_app(database_path=database_path)) as restarted_client:
+        restarted_client.auth = auth
+        restored = restarted_client.get(f"/api/sessions/{token}/snapshot")
+
+    assert restored.status_code == 200
+    assert restored.json()["seller"]["seller_id"] == "sel_velocity_kicks"
+    assert restored.json()["show"]["active_listing_id"] == "lst_velocity_aero_dash"
+    assert [event["raw_text"] for event in restored.json()["chat_events"]] == ["hello"]
+    with MarketplaceDatabase(database_path).read() as connection:
+        stored = connection.execute(
+            "SELECT session_token_digest FROM demo_sessions"
+        ).fetchall()
+        usage_units = connection.execute(
+            "SELECT SUM(units) FROM challenge_usage"
+        ).fetchone()[0]
+    assert token not in {row[0] for row in stored}
+    assert all(len(row[0]) == 64 for row in stored)
+    assert usage_units == 1
+
+
+def test_stateful_deployment_contract_uses_one_instance_and_persistent_sqlite() -> None:
+    repository = Path(__file__).resolve().parents[2]
+    dockerfile = (repository / "Dockerfile").read_text(encoding="utf-8")
+    blueprint = (repository / "render.yaml").read_text(encoding="utf-8")
+
+    assert "create_challenge_app" in dockerfile
+    assert "SIDESTAGE_DATABASE_PATH=/var/data/sidestage.sqlite3" in dockerfile
+    assert "type: web" in blueprint
+    assert "runtime: docker" in blueprint
+    assert "numInstances: 1" in blueprint
+    assert "healthCheckPath: /healthz" in blueprint
+    assert "mountPath: /var/data" in blueprint
+    assert "SIDESTAGE_DEMO_PASSWORD" in blueprint
+    assert "sync: false" in blueprint
+
+
+def test_challenge_factory_honors_deployment_database_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_challenge(monkeypatch)
+    database_path = tmp_path / "mounted" / "sidestage.sqlite3"
+    monkeypatch.setenv("SIDESTAGE_DATABASE_PATH", str(database_path))
+
+    application = create_challenge_app()
+
+    assert application.state.database.path == database_path
+    assert database_path.exists()
+
+
 def test_vercel_entrypoint_imports_with_server_only_environment(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -292,3 +385,10 @@ def test_vercel_entrypoint_imports_with_server_only_environment(
         assert sellers.json()["demo_capabilities"]["challenge_mode"] is True
 
     assert database_path.exists()
+
+
+def test_vercel_config_preserves_fastapi_request_paths() -> None:
+    config_path = Path(__file__).resolve().parents[2] / "vercel.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert "rewrites" not in config

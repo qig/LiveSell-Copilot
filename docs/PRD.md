@@ -130,6 +130,7 @@ P0 includes:
 | Grounded Copilot Inbox, Manual review, Auto-message, seller edits, research, safety races, and debugger | `Verified` deterministically at `3fda622` |
 | Protected local reviewer boundary | `Verified` at `3fda622` |
 | Vercel reviewer routing correction | `Implemented` in the working tree; not yet commit-bound `Verified` |
+| Restart-safe reviewer session on one persistent SQLite instance, plus portable Docker/Render deployment | `Implemented` and container-restart tested in the working tree; not yet commit-bound `Verified` |
 | Current committed live configuration with at least 95% semantic correctness, zero hard-safety violations, and answerable-question p95 below two seconds | **P0 release gate open** |
 
 P1 begins after the P0 release gate:

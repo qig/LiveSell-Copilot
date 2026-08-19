@@ -20,6 +20,15 @@ CREATE TABLE IF NOT EXISTS shows (
     version INTEGER NOT NULL CHECK (version > 0),
     show_seq INTEGER NOT NULL CHECK (show_seq >= 0)
 );
+CREATE TABLE IF NOT EXISTS demo_sessions (
+    session_token_digest TEXT PRIMARY KEY CHECK (length(session_token_digest) = 64),
+    seller_id TEXT NOT NULL REFERENCES sellers(seller_id),
+    show_id TEXT NOT NULL REFERENCES shows(show_id),
+    actor_id TEXT NOT NULL,
+    issued_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS demo_sessions_by_scope
+    ON demo_sessions(seller_id, show_id);
 CREATE TABLE IF NOT EXISTS listings (
     listing_id TEXT PRIMARY KEY,
     seller_id TEXT NOT NULL REFERENCES sellers(seller_id),

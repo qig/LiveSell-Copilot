@@ -179,10 +179,13 @@ def test_non_ai_marketplace_flow_is_server_owned_and_reconnectable(
     )
 
     # Prepared and tester-entered messages share one accepted chat feed.
+    expect(page.locator("#toggle-stream span")).to_have_text("Mock livesell")
     page.locator("#toggle-stream").click()
-    expect(page.locator("#stream-status")).to_have_text("Fixture playing")
+    expect(page.locator("#stream-status")).to_have_text("Mock livesell running")
+    expect(page.locator("#toggle-stream span")).to_have_text("Pause mock livesell")
     expect(page.locator(".chat-item")).to_have_count(1)
     page.locator("#toggle-stream").click()
+    expect(page.locator("#toggle-stream span")).to_have_text("Mock livesell")
     expect(page.locator("#stream-status")).to_have_text("Live sync")
     page.locator("#chat-input").fill("Is the pair on stage available in size 9?")
     page.locator("#chat-form button[type=submit]").click()
