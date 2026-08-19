@@ -94,10 +94,12 @@ def test_r3_warning_persists_and_disable_immediately_restores_r2_review(
     expect(page.locator("#operation-dialog")).to_be_hidden()
     page.locator("#chat-input").fill("How much is this pair?")
     page.locator("#chat-form button[type=submit]").click()
-    first = page.locator(".copilot-card").first
-    expect(first.locator(".copilot-state")).to_have_text("Auto answered")
-    expect(first.locator(".copilot-resolution")).to_contain_text("receipt recorded")
-    expect(first.locator("[data-copilot-reply]")).to_have_count(0)
+    expect(page.locator(".copilot-card")).to_have_count(0)
+    auto_reply = page.locator('.chat-item[data-timeline-kind="seller"]')
+    expect(auto_reply).to_have_count(1)
+    expect(auto_reply.locator(".chat-reply-quote")).to_contain_text(
+        "demo_tester · How much is this pair?"
+    )
 
     page.locator("#r3-disable").click()
     expect(page.locator("#r3-toggle-label")).to_have_text("Review first")
@@ -105,10 +107,10 @@ def test_r3_warning_persists_and_disable_immediately_restores_r2_review(
 
     page.locator("#chat-input").fill("What is the price right now?")
     page.locator("#chat-form button[type=submit]").click()
-    expect(page.locator(".copilot-card")).to_have_count(2)
-    second = page.locator(".copilot-card").nth(1)
-    expect(second.locator(".copilot-state")).to_have_text("Ready for review")
-    expect(second.locator('[data-copilot-action="accept"]')).to_be_visible()
+    expect(page.locator(".copilot-card")).to_have_count(1)
+    current = page.locator(".copilot-card").first
+    expect(current.locator(".copilot-state")).to_have_text("Ready for review")
+    expect(current.locator('[data-copilot-action="accept"]')).to_be_visible()
 
     token = page.evaluate("sessionStorage.getItem('sidestage.m2.session')")
     projection = page.evaluate(
@@ -122,4 +124,14 @@ def test_r3_warning_persists_and_disable_immediately_restores_r2_review(
     assert projection["r3_capability"]["version"] == 3
     assert len(projection["outbound_replies"]) == 1
     assert projection["reply_receipts"][0]["mode"] == "r3"
+    assert [item["kind"] for item in projection["chat_timeline"]] == [
+        "buyer",
+        "seller",
+        "buyer",
+    ]
+    assert projection["chat_timeline"][1]["quote"] == {
+        "event_id": projection["chat_timeline"][0]["event_id"],
+        "customer_display_name": "demo_tester",
+        "text": "How much is this pair?",
+    }
     assert not browser_errors

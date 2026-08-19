@@ -1292,7 +1292,7 @@ def copilot_projection(
                JOIN chat_events c ON c.event_id = q.event_id
                LEFT JOIN copilot_suggestions s ON s.question_id = q.question_id
                WHERE q.seller_id = ? AND q.show_id = ? AND q.route != 'noise'
-               ORDER BY q.question_number""",
+               ORDER BY q.question_number DESC""",
             (seller_id, show_id),
         ).fetchall()
         outbound = connection.execute(
@@ -1316,6 +1316,31 @@ def copilot_projection(
                WHERE seller_id = ? AND show_id = ?""",
             (seller_id, show_id),
         ).fetchone()
+        timeline_stream_rows = connection.execute(
+            """SELECT stream_offset, event_type, payload_json, created_at
+               FROM stream_events
+               WHERE seller_id = ? AND show_id = ?
+                 AND event_type IN ('chat.accepted', 'chat.reply')
+               ORDER BY stream_offset""",
+            (seller_id, show_id),
+        ).fetchall()
+        timeline_buyer_rows = connection.execute(
+            """SELECT event_id, show_seq, customer_display_name, raw_text,
+                      input_origin, accepted_at
+               FROM chat_events
+               WHERE seller_id = ? AND show_id = ?""",
+            (seller_id, show_id),
+        ).fetchall()
+        timeline_reply_rows = connection.execute(
+            """SELECT o.reply_id, o.question_id, o.mode, o.reply_text, o.created_at,
+                      c.event_id, c.customer_display_name,
+                      c.raw_text AS original_buyer_text
+               FROM copilot_outbound_replies o
+               JOIN copilot_questions q ON q.question_id = o.question_id
+               JOIN chat_events c ON c.event_id = q.event_id
+               WHERE o.seller_id = ? AND o.show_id = ?""",
+            (seller_id, show_id),
+        ).fetchall()
     questions = []
     for row in question_rows:
         suggestion = None
@@ -1329,6 +1354,7 @@ def copilot_projection(
         questions.append(
             {
                 "question_id": row["question_id"],
+                "question_seq": int(row["question_number"]),
                 "event_id": row["event_id"],
                 "customer_display_name": row["customer_display_name"],
                 "raw_text": row["raw_text"],
@@ -1350,6 +1376,11 @@ def copilot_projection(
         )
     return {
         "copilot_questions": questions,
+        "chat_timeline": _chat_timeline(
+            timeline_stream_rows,
+            timeline_buyer_rows,
+            timeline_reply_rows,
+        ),
         "outbound_replies": [dict(row) for row in outbound],
         "reply_receipts": [
             {
@@ -1370,6 +1401,58 @@ def copilot_projection(
             "updated_at": capability_row["updated_at"],
         },
     }
+
+
+def _chat_timeline(stream_rows, buyer_rows, reply_rows) -> list[dict]:
+    buyers = {row["event_id"]: row for row in buyer_rows}
+    replies = {row["reply_id"]: row for row in reply_rows}
+    timeline: list[dict] = []
+    for stream in stream_rows:
+        try:
+            payload = json.loads(stream["payload_json"])
+        except (TypeError, ValueError):
+            continue
+        if stream["event_type"] == "chat.accepted":
+            event_id = payload.get("event_id")
+            row = buyers.get(event_id)
+            if row is None:
+                continue
+            timeline.append(
+                {
+                    "timeline_id": f"buyer:{event_id}",
+                    "stream_offset": int(stream["stream_offset"]),
+                    "kind": "buyer",
+                    "occurred_at": row["accepted_at"],
+                    "event_id": event_id,
+                    "show_seq": int(row["show_seq"]),
+                    "customer_display_name": row["customer_display_name"],
+                    "text": row["raw_text"],
+                    "input_origin": row["input_origin"],
+                }
+            )
+            continue
+        reply_id = payload.get("reply_id")
+        row = replies.get(reply_id)
+        if row is None:
+            continue
+        timeline.append(
+            {
+                "timeline_id": f"seller:{reply_id}",
+                "stream_offset": int(stream["stream_offset"]),
+                "kind": "seller",
+                "occurred_at": row["created_at"],
+                "reply_id": reply_id,
+                "question_id": row["question_id"],
+                "mode": row["mode"],
+                "text": row["reply_text"],
+                "quote": {
+                    "event_id": row["event_id"],
+                    "customer_display_name": row["customer_display_name"],
+                    "text": row["original_buyer_text"],
+                },
+            }
+        )
+    return timeline
 
 
 def _runtime_identity(row) -> Optional[dict]:

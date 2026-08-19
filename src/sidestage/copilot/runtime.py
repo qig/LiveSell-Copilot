@@ -336,6 +336,27 @@ class RuntimeSelector:
         with self._lock:
             return "steady" if key in self._cold_consumed else "cold"
 
+    def reset(self, authority: SellerAuthority) -> RuntimeSelection:
+        """Restore the startup default while preserving monotonic selection identity."""
+
+        key = (authority.seller_id, authority.show_id)
+        with self._lock:
+            active = self._active.get(key)
+            next_version = 1 if active is None else active.selection_version + 1
+            reset = self._selection(
+                authority,
+                workflow_id=self.catalog.default_workflow_id,
+                model_profile_id=self.catalog.default_model_profile_id,
+                version=next_version,
+            )
+            self._active[key] = reset
+            self._cold_consumed = {
+                marker
+                for marker in self._cold_consumed
+                if marker[:2] != key
+            }
+            return reset
+
     def _selection(
         self,
         authority: SellerAuthority,

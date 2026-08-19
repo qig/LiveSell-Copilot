@@ -52,6 +52,12 @@
           <span id="runtime-workflow">Runtime loading</span>
           <span class="status-suffix" id="runtime-model">—</span>
         </div>
+        <button class="icon-link reset-demo-button" id="reset-demo" type="button" aria-label="Reset current synthetic demo">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6M4 4v4.6h4.6" />
+          </svg>
+          <span>Reset demo</span>
+        </button>
         <a class="icon-link" href="./debug.html" aria-label="Open developer ledger">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" />
@@ -88,6 +94,10 @@
           <span class="toolbar-note">Synthetic input · chronological</span>
         </div>
 
+        <p class="chat-stage-guidance" id="chat-stage-guidance" role="status">
+          Push a listing before sending buyer questions.
+        </p>
+
         <div class="chat-feed" id="chat-feed" aria-live="polite" aria-relevant="additions">
           <div class="feed-empty" id="feed-empty">
             <span class="empty-index">00</span>
@@ -113,7 +123,7 @@
               placeholder="Ask about the pair on stage…"
               required
             />
-            <button class="send-button" type="submit">
+            <button class="send-button" id="chat-send" type="submit">
               <span>Send</span>
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="m5 12 14-7-4 14-3-5-7-2Zm7 2 7-9" />
@@ -159,11 +169,37 @@
             <span class="section-note" id="copilot-count">0 questions</span>
           </div>
           <p class="copilot-assurance">AI drafts never send by themselves in R2. Accept, edit, or answer in your own words.</p>
-          <div class="copilot-list" id="copilot-list" aria-live="polite">
-            <div class="copilot-empty">
-              <strong>No questions yet.</strong>
-              <p>Buyer questions will appear here after they pass deterministic routing.</p>
-            </div>
+          <div class="copilot-panels" id="copilot-panels">
+            <section class="copilot-panel copilot-panel--now" aria-labelledby="copilot-now-title">
+              <header class="copilot-panel-header">
+                <div>
+                  <span class="copilot-panel-index">01</span>
+                  <h4 id="copilot-now-title">Now</h4>
+                </div>
+                <span id="copilot-now-count">0</span>
+              </header>
+              <div class="copilot-list" id="copilot-now-list" aria-live="polite">
+                <div class="copilot-empty">
+                  <strong>No current questions.</strong>
+                  <p>New buyer questions stay expanded here for twenty seconds.</p>
+                </div>
+              </div>
+            </section>
+            <section class="copilot-panel copilot-panel--earlier" aria-labelledby="copilot-earlier-title">
+              <header class="copilot-panel-header">
+                <div>
+                  <span class="copilot-panel-index">02</span>
+                  <h4 id="copilot-earlier-title">Earlier</h4>
+                </div>
+                <span id="copilot-earlier-count">0</span>
+              </header>
+              <div class="copilot-list copilot-list--earlier" id="copilot-earlier-list" aria-live="polite">
+                <div class="copilot-empty">
+                  <strong>No earlier questions.</strong>
+                  <p>Unresolved questions collapse here after twenty seconds.</p>
+                </div>
+              </div>
+            </section>
           </div>
         </section>
 

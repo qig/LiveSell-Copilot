@@ -218,6 +218,12 @@ class PreparedChatSource:
                 selected.append((display_name, raw_text))
             return selected
 
+    def reset(self, seller_id: str) -> None:
+        """Restart only one synthetic seller's deterministic prepared sequence."""
+
+        with self._lock:
+            self._random.pop(seller_id, None)
+
     def _seller_seed(self, seller_id: str) -> int:
         digest = hashlib.sha256(f"{self._seed}:{seller_id}".encode("utf-8")).digest()
         return int.from_bytes(digest[:8], "big")

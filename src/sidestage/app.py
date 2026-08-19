@@ -60,6 +60,7 @@ from sidestage.copilot.workflows import (
 from sidestage.fixtures.import_trace import trace_seller_fixture_import
 from sidestage.fixtures.loader import SellerCatalog, load_seller_fixture
 from sidestage.marketplace.authority import SellerAuthority
+from sidestage.marketplace.demo_reset import DemoMutationGate, DemoResetService
 from sidestage.marketplace.service import (
     AuditPersistenceError,
     InventoryChangeRequest,
@@ -212,6 +213,13 @@ def create_app(
     )
     prepared = PreparedChatSource(seed=prepared_seed)
     sessions = DemoSessionRegistry(catalog)
+    demo_mutation_gate = DemoMutationGate()
+    demo_reset_service = DemoResetService(
+        database,
+        catalog,
+        stream_store,
+        wall_clock=clock,
+    )
     copilot_router = CopilotRouter(database, catalog)
     trace_sink = BufferedTraceSink(SqliteTraceSink(database))
     trace_recorder = TraceRecorder(
@@ -294,6 +302,8 @@ def create_app(
     application.state.stream_store = stream_store
     application.state.hub = hub
     application.state.sessions = sessions
+    application.state.demo_mutation_gate = demo_mutation_gate
+    application.state.demo_reset_service = demo_reset_service
     application.state.copilot_router = copilot_router
     application.state.model_runner = configured_runner
     application.state.analyzer = analyzer
@@ -354,69 +364,75 @@ def create_app(
     @application.post("/api/sessions/{session_token}/chat/custom", status_code=201)
     async def accept_custom_chat(session_token: str, request: CustomChatRequest) -> dict:
         session = sessions.require(session_token)
-        result = await process_customer_reply(
-            RawCustomerReplyEvent(
-                authority=session.authority,
-                customer_display_name="demo_tester",
-                raw_text=request.raw_text,
-                input_origin="custom",
-            ),
-            pipeline_services,
-        )
-        await hub.notify(session.authority.show_id)
-        event = next(
-            item
-            for item in ingestor.events(session.authority)
-            if item.event_id == result.event_id
-        )
-        return {
-            "events": [event.model_dump(mode="json")],
-            "pipeline_results": [result.model_dump(mode="json")],
-            "snapshot": _snapshot(
-                catalog,
-                marketplace,
-                ingestor,
-                stream_store,
-                session.authority,
-                runtime_selector,
-            ),
-        }
+        async with demo_mutation_gate.mutation(session.authority):
+            _require_active_listing(marketplace, session.authority)
+            result = await process_customer_reply(
+                RawCustomerReplyEvent(
+                    authority=session.authority,
+                    customer_display_name="demo_tester",
+                    raw_text=request.raw_text,
+                    input_origin="custom",
+                ),
+                pipeline_services,
+            )
+            await hub.notify(session.authority.show_id)
+            event = next(
+                item
+                for item in ingestor.events(session.authority)
+                if item.event_id == result.event_id
+            )
+            return {
+                "events": [event.model_dump(mode="json")],
+                "pipeline_results": [result.model_dump(mode="json")],
+                "snapshot": _snapshot(
+                    catalog,
+                    marketplace,
+                    ingestor,
+                    stream_store,
+                    session.authority,
+                    runtime_selector,
+                ),
+            }
 
     @application.post("/api/sessions/{session_token}/chat/prepared", status_code=201)
     async def accept_prepared_chat(session_token: str, request: PreparedChatRequest) -> dict:
         session = sessions.require(session_token)
-        selected = prepared.take(session.authority.seller_id, request.count)
-        results = await asyncio.gather(
-            *(
-                process_customer_reply(
-                    RawCustomerReplyEvent(
-                        authority=session.authority,
-                        customer_display_name=display_name,
-                        raw_text=raw_text,
-                        input_origin="prepared",
-                    ),
-                    pipeline_services,
+        async with demo_mutation_gate.mutation(session.authority):
+            _require_active_listing(marketplace, session.authority)
+            selected = prepared.take(session.authority.seller_id, request.count)
+            results = await asyncio.gather(
+                *(
+                    process_customer_reply(
+                        RawCustomerReplyEvent(
+                            authority=session.authority,
+                            customer_display_name=display_name,
+                            raw_text=raw_text,
+                            input_origin="prepared",
+                        ),
+                        pipeline_services,
+                    )
+                    for display_name, raw_text in selected
                 )
-                for display_name, raw_text in selected
             )
-        )
-        result_ids = {result.event_id for result in results}
-        events = [
-            event for event in ingestor.events(session.authority) if event.event_id in result_ids
-        ]
-        await hub.notify(session.authority.show_id)
-        return {
-            "events": [event.model_dump(mode="json") for event in events],
-            "pipeline_results": [result.model_dump(mode="json") for result in results],
-            "snapshot": _snapshot(
-                catalog,
-                marketplace,
-                ingestor,
-                stream_store,
-                session.authority,
-                runtime_selector,
-            ),
-        }
+            result_ids = {result.event_id for result in results}
+            events = [
+                event
+                for event in ingestor.events(session.authority)
+                if event.event_id in result_ids
+            ]
+            await hub.notify(session.authority.show_id)
+            return {
+                "events": [event.model_dump(mode="json") for event in events],
+                "pipeline_results": [result.model_dump(mode="json") for result in results],
+                "snapshot": _snapshot(
+                    catalog,
+                    marketplace,
+                    ingestor,
+                    stream_store,
+                    session.authority,
+                    runtime_selector,
+                ),
+            }
 
     @application.post("/api/sessions/{session_token}/copilot/questions/{question_id}/decision")
     async def decide_reply(
@@ -426,26 +442,27 @@ def create_app(
         idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
     ) -> dict:
         session = sessions.require(session_token)
-        try:
-            result = await reply_service.decide(
+        async with demo_mutation_gate.mutation(session.authority):
+            try:
+                result = await reply_service.decide(
+                    session.authority,
+                    question_id,
+                    request,
+                    idempotency_key=idempotency_key,
+                )
+            except KeyError as error:
+                raise HTTPException(status_code=404, detail=str(error)) from error
+            except ValueError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
+            result["snapshot"] = _snapshot(
+                catalog,
+                marketplace,
+                ingestor,
+                stream_store,
                 session.authority,
-                question_id,
-                request,
-                idempotency_key=idempotency_key,
+                runtime_selector,
             )
-        except KeyError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        result["snapshot"] = _snapshot(
-            catalog,
-            marketplace,
-            ingestor,
-            stream_store,
-            session.authority,
-            runtime_selector,
-        )
-        return result
+            return result
 
     @application.post("/api/sessions/{session_token}/copilot/r3")
     async def change_r3_capability(
@@ -453,23 +470,24 @@ def create_app(
         request: R3CapabilityChangeRequest,
     ) -> dict:
         session = sessions.require(session_token)
-        try:
-            capability = await r3_capability_service.change(session.authority, request)
-        except KeyError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        return {
-            "capability": capability.model_dump(mode="json"),
-            "snapshot": _snapshot(
-                catalog,
-                marketplace,
-                ingestor,
-                stream_store,
-                session.authority,
-                runtime_selector,
-            ),
-        }
+        async with demo_mutation_gate.mutation(session.authority):
+            try:
+                capability = await r3_capability_service.change(session.authority, request)
+            except KeyError as error:
+                raise HTTPException(status_code=404, detail=str(error)) from error
+            except ValueError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
+            return {
+                "capability": capability.model_dump(mode="json"),
+                "snapshot": _snapshot(
+                    catalog,
+                    marketplace,
+                    ingestor,
+                    stream_store,
+                    session.authority,
+                    runtime_selector,
+                ),
+            }
 
     @application.post("/api/sessions/{session_token}/actions/push")
     async def push(
@@ -478,21 +496,22 @@ def create_app(
         idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
     ) -> dict:
         session = sessions.require(session_token)
-        receipt = marketplace.push(
-            session.authority,
-            request,
-            idempotency_key=idempotency_key,
-        )
-        return await _action_response(
-            receipt,
-            session.authority,
-            catalog,
-            marketplace,
-            ingestor,
-            stream_store,
-            hub,
-            runtime_selector,
-        )
+        async with demo_mutation_gate.mutation(session.authority):
+            receipt = marketplace.push(
+                session.authority,
+                request,
+                idempotency_key=idempotency_key,
+            )
+            return await _action_response(
+                receipt,
+                session.authority,
+                catalog,
+                marketplace,
+                ingestor,
+                stream_store,
+                hub,
+                runtime_selector,
+            )
 
     @application.post("/api/sessions/{session_token}/actions/swap")
     async def swap(
@@ -501,15 +520,16 @@ def create_app(
         idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
     ) -> dict:
         session = sessions.require(session_token)
-        receipt = marketplace.swap(
-            session.authority,
-            request,
-            idempotency_key=idempotency_key,
-        )
-        return await _action_response(
-            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
-            runtime_selector,
-        )
+        async with demo_mutation_gate.mutation(session.authority):
+            receipt = marketplace.swap(
+                session.authority,
+                request,
+                idempotency_key=idempotency_key,
+            )
+            return await _action_response(
+                receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
+                runtime_selector,
+            )
 
     @application.post("/api/sessions/{session_token}/actions/unlist")
     async def unlist(
@@ -518,15 +538,16 @@ def create_app(
         idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
     ) -> dict:
         session = sessions.require(session_token)
-        receipt = marketplace.unlist(
-            session.authority,
-            request,
-            idempotency_key=idempotency_key,
-        )
-        return await _action_response(
-            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
-            runtime_selector,
-        )
+        async with demo_mutation_gate.mutation(session.authority):
+            receipt = marketplace.unlist(
+                session.authority,
+                request,
+                idempotency_key=idempotency_key,
+            )
+            return await _action_response(
+                receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
+                runtime_selector,
+            )
 
     @application.post("/api/sessions/{session_token}/actions/price-markdown")
     async def price_markdown(
@@ -535,15 +556,16 @@ def create_app(
         idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
     ) -> dict:
         session = sessions.require(session_token)
-        receipt = marketplace.price_markdown(
-            session.authority,
-            request,
-            idempotency_key=idempotency_key,
-        )
-        return await _action_response(
-            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
-            runtime_selector,
-        )
+        async with demo_mutation_gate.mutation(session.authority):
+            receipt = marketplace.price_markdown(
+                session.authority,
+                request,
+                idempotency_key=idempotency_key,
+            )
+            return await _action_response(
+                receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
+                runtime_selector,
+            )
 
     @application.post("/api/sessions/{session_token}/actions/inventory-change")
     async def inventory_change(
@@ -552,15 +574,16 @@ def create_app(
         idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
     ) -> dict:
         session = sessions.require(session_token)
-        receipt = marketplace.inventory_change(
-            session.authority,
-            request,
-            idempotency_key=idempotency_key,
-        )
-        return await _action_response(
-            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
-            runtime_selector,
-        )
+        async with demo_mutation_gate.mutation(session.authority):
+            receipt = marketplace.inventory_change(
+                session.authority,
+                request,
+                idempotency_key=idempotency_key,
+            )
+            return await _action_response(
+                receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
+                runtime_selector,
+            )
 
     @application.post(
         "/api/sessions/{session_token}/receipts/{receipt_id}/compensate"
@@ -571,18 +594,42 @@ def create_app(
         idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
     ) -> dict:
         session = sessions.require(session_token)
-        try:
-            receipt = marketplace.compensate(
-                session.authority,
-                receipt_id,
-                idempotency_key=idempotency_key,
+        async with demo_mutation_gate.mutation(session.authority):
+            try:
+                receipt = marketplace.compensate(
+                    session.authority,
+                    receipt_id,
+                    idempotency_key=idempotency_key,
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
+            return await _action_response(
+                receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
+                runtime_selector,
             )
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        return await _action_response(
-            receipt, session.authority, catalog, marketplace, ingestor, stream_store, hub,
-            runtime_selector,
-        )
+
+    @application.post("/api/sessions/{session_token}/demo/reset")
+    async def reset_demo(session_token: str) -> dict:
+        session = sessions.require(session_token)
+        async with demo_mutation_gate.reset(session.authority):
+            trace_sink.flush()
+            reset_result = demo_reset_service.reset(session.authority)
+            prepared.reset(session.authority.seller_id)
+            runtime_selection = runtime_selector.reset(session.authority)
+            await hub.notify(session.authority.show_id)
+            return {
+                "status": "reset",
+                **reset_result,
+                "runtime_selection": runtime_selection.model_dump(mode="json"),
+                "snapshot": _snapshot(
+                    catalog,
+                    marketplace,
+                    ingestor,
+                    stream_store,
+                    session.authority,
+                    runtime_selector,
+                ),
+            }
 
     @application.get("/api/sessions/{session_token}/events")
     async def stream_events(
@@ -662,39 +709,40 @@ def create_app(
         session_token: str = Query(min_length=1),
     ) -> dict:
         session = sessions.require(session_token)
-        try:
-            changed = runtime_selector.switch(
-                session.authority,
-                workflow_id=request.workflow_id,
-                model_profile_id=request.model_profile_id,
-                expected_selection_version=request.expected_selection_version,
+        async with demo_mutation_gate.mutation(session.authority):
+            try:
+                changed = runtime_selector.switch(
+                    session.authority,
+                    workflow_id=request.workflow_id,
+                    model_profile_id=request.model_profile_id,
+                    expected_selection_version=request.expected_selection_version,
+                )
+            except RuntimeSelectionConflict as error:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": error.code, "message": str(error)},
+                ) from error
+            changed_at = _utc_millis(clock())
+            stream_store.append(
+                seller_id=session.authority.seller_id,
+                show_id=session.authority.show_id,
+                event_type="copilot.runtime.changed",
+                payload=changed.model_dump(mode="json"),
+                created_at=changed_at,
             )
-        except RuntimeSelectionConflict as error:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": error.code, "message": str(error)},
-            ) from error
-        changed_at = _utc_millis(clock())
-        stream_store.append(
-            seller_id=session.authority.seller_id,
-            show_id=session.authority.show_id,
-            event_type="copilot.runtime.changed",
-            payload=changed.model_dump(mode="json"),
-            created_at=changed_at,
-        )
-        await hub.notify(session.authority.show_id)
-        return {
-            "active_selection": changed.model_dump(mode="json"),
-            "next_sample_phase": runtime_selector.next_sample_phase(changed),
-            "snapshot": _snapshot(
-                catalog,
-                marketplace,
-                ingestor,
-                stream_store,
-                session.authority,
-                runtime_selector,
-            ),
-        }
+            await hub.notify(session.authority.show_id)
+            return {
+                "active_selection": changed.model_dump(mode="json"),
+                "next_sample_phase": runtime_selector.next_sample_phase(changed),
+                "snapshot": _snapshot(
+                    catalog,
+                    marketplace,
+                    ingestor,
+                    stream_store,
+                    session.authority,
+                    runtime_selector,
+                ),
+            }
 
     @application.get("/api/debug/import-trace")
     def import_trace() -> dict:
@@ -943,6 +991,20 @@ def _supplemental_live_registrations(
         )
         registrations.append(RuntimeModelRegistration(profile, profile_runner))
     return registrations
+
+
+def _require_active_listing(
+    marketplace: MarketplaceService,
+    authority: SellerAuthority,
+) -> None:
+    if marketplace.show_state(authority.show_id).active_listing_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "active_slot_empty",
+                "message": "Push a listing before sending buyer questions.",
+            },
+        )
 
 
 async def _action_response(

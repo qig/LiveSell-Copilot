@@ -2,6 +2,8 @@
   "use strict";
 
   const SESSION_KEY = "sidestage.m2.session";
+  const RECENT_QUESTION_MS = 20_000;
+  const OPEN_QUESTION_STATES = new Set(["queued", "ai_working", "awaiting_review", "needs_seller"]);
   const SELLER_ORDER = ["sel_velocity_kicks", "sel_vault_consign", "sel_rotation_kicks"];
   const OPERATION_LABELS = {
     push: "Push",
@@ -9,6 +11,7 @@
     unlist: "Unlist",
     price_markdown: "Price Markdown",
     inventory_change: "Inventory Change",
+    reset: "Reset demo",
   };
   const OPERATION_INDEX = {
     push: "01",
@@ -16,6 +19,7 @@
     unlist: "03",
     price_markdown: "04",
     inventory_change: "05",
+    reset: "00",
   };
 
   const dom = {};
@@ -30,6 +34,11 @@
   let idempotencyCounter = 0;
   let snapshotRefresh = null;
   let sellerSwitchPending = false;
+  let resetPending = false;
+  let inboxAgeTimer = null;
+  let inboxBucketSignature = "";
+  const expandedEarlierQuestions = new Set();
+  const questionFirstSeenAt = new Map();
 
   document.addEventListener("DOMContentLoaded", boot);
 
@@ -63,6 +72,7 @@
       runtimeBadge: document.querySelector("#runtime-badge"),
       runtimeWorkflow: document.querySelector("#runtime-workflow"),
       runtimeModel: document.querySelector("#runtime-model"),
+      resetDemo: document.querySelector("#reset-demo"),
       activeSku: document.querySelector("#active-sku"),
       eventCount: document.querySelector("#event-count"),
       toggleStream: document.querySelector("#toggle-stream"),
@@ -71,8 +81,14 @@
       chatFeed: document.querySelector("#chat-feed"),
       chatForm: document.querySelector("#chat-form"),
       chatInput: document.querySelector("#chat-input"),
+      chatSend: document.querySelector("#chat-send"),
+      chatStageGuidance: document.querySelector("#chat-stage-guidance"),
       activeCue: document.querySelector("#active-cue"),
-      copilotList: document.querySelector("#copilot-list"),
+      copilotPanels: document.querySelector("#copilot-panels"),
+      copilotNowList: document.querySelector("#copilot-now-list"),
+      copilotEarlierList: document.querySelector("#copilot-earlier-list"),
+      copilotNowCount: document.querySelector("#copilot-now-count"),
+      copilotEarlierCount: document.querySelector("#copilot-earlier-count"),
       copilotCount: document.querySelector("#copilot-count"),
       operationDock: document.querySelector("#operation-dock"),
       catalogRail: document.querySelector("#catalog-rail"),
@@ -106,6 +122,7 @@
     });
     dom.r3Toggle.addEventListener("click", toggleR3);
     dom.r3Disable.addEventListener("click", () => toggleR3({forceDisabled: true}));
+    dom.resetDemo.addEventListener("click", () => openOperationDialog("reset"));
     dom.stepStream.addEventListener("click", () => appendPrepared(1));
     dom.burstStream.addEventListener("click", () => appendPrepared(8));
     dom.chatForm.addEventListener("submit", submitCustomChat);
@@ -113,14 +130,16 @@
       const button = event.target.closest("[data-operation]");
       if (button && !button.disabled) openOperationDialog(button.dataset.operation);
     });
-    dom.copilotList.addEventListener("click", submitCopilotDecision);
+    dom.copilotPanels.addEventListener("click", handleCopilotPanelClick);
     dom.operationForm.addEventListener("submit", submitOperation);
     dom.undoButton.addEventListener("click", performUndo);
     dom.noticeClose.addEventListener("click", hideNotice);
     window.addEventListener("beforeunload", () => {
       stopFixture();
+      if (inboxAgeTimer) window.clearInterval(inboxAgeTimer);
       eventSource?.close();
     });
+    inboxAgeTimer = window.setInterval(() => renderCopilotInbox(), 1_000);
   }
 
   async function api(url, options = {}) {
@@ -138,7 +157,9 @@
     if (!response.ok) {
       const detail = Array.isArray(payload?.detail)
         ? payload.detail.map((item) => item.msg).join("; ")
-        : payload?.detail;
+        : typeof payload?.detail === "object"
+          ? payload.detail.message || payload.detail.code
+          : payload?.detail;
       throw new Error(detail || `Request failed (${response.status})`);
     }
     return payload;
@@ -202,6 +223,8 @@
     dom.workspace.inert = pending;
     dom.workspace.setAttribute("aria-busy", String(pending));
     dom.r3Toggle.disabled = pending;
+    dom.resetDemo.disabled = pending || resetPending;
+    if (!pending && snapshot) renderAll();
   }
 
   function connectEvents() {
@@ -218,7 +241,7 @@
       dom.streamChip.classList.remove("is-running");
       dom.streamStatus.textContent = "Reconnecting";
     };
-    ["chat.accepted", "chat.reply", "marketplace.changed", "copilot.question.changed", "copilot.r3.changed", "copilot.runtime.changed"].forEach((type) => {
+    ["chat.accepted", "chat.reply", "marketplace.changed", "copilot.question.changed", "copilot.r3.changed", "copilot.runtime.changed", "demo.reset"].forEach((type) => {
       eventSource.addEventListener(type, () => scheduleSnapshotRefresh());
     });
   }
@@ -358,7 +381,7 @@
       inventory_change: Boolean(active),
     };
     dom.operationDock.querySelectorAll("[data-operation]").forEach((button) => {
-      button.disabled = !states[button.dataset.operation];
+      button.disabled = resetPending || !states[button.dataset.operation];
       button.setAttribute("aria-disabled", String(button.disabled));
     });
   }
@@ -397,7 +420,7 @@
       button.dataset.listingId = listing.listing_id;
       button.setAttribute("role", "listitem");
       button.setAttribute("aria-pressed", String(isSelected));
-      button.disabled = isActive || unavailable;
+      button.disabled = resetPending || isActive || unavailable;
       button.innerHTML = `
         ${productArt(listing, productHue(listing.sku))}
         <span class="catalog-card-copy">
@@ -428,83 +451,182 @@
 
   function renderChat() {
     const nearBottom = dom.chatFeed.scrollHeight - dom.chatFeed.scrollTop - dom.chatFeed.clientHeight < 80;
+    const timeline = snapshot.chat_timeline || snapshot.chat_events.map((event) => ({
+      timeline_id: `buyer:${event.event_id}`,
+      kind: "buyer",
+      occurred_at: event.accepted_at,
+      event_id: event.event_id,
+      show_seq: event.show_seq,
+      customer_display_name: event.customer_display_name,
+      text: event.raw_text,
+      input_origin: event.input_origin,
+    }));
     dom.chatFeed.replaceChildren();
-    if (!snapshot.chat_events.length) {
+    if (!timeline.length) {
       dom.chatFeed.innerHTML = `
         <div class="feed-empty"><span class="empty-index">00</span><div>
           <strong>The room is quiet.</strong><p>Play the prepared fixture or enter a custom buyer message below.</p>
         </div></div>`;
       return;
     }
-    snapshot.chat_events.forEach((event) => {
+    timeline.forEach((event) => {
       const item = document.createElement("article");
-      item.className = "chat-item";
-      item.innerHTML = `
-        <span class="chat-index">${String(event.show_seq).padStart(2, "0")}</span>
-        <div class="chat-body">
-          <div class="chat-meta"><strong class="chat-customer">${escapeHtml(event.customer_display_name)}</strong><span class="chat-origin ${event.input_origin === "custom" ? "chat-origin--custom" : ""}">${escapeHtml(event.input_origin)}</span></div>
-          <p class="chat-text">${escapeHtml(event.raw_text)}</p>
-        </div>
-        <div class="chat-binding"><time datetime="${escapeHtml(event.accepted_at)}">${escapeHtml(formatClock(event.accepted_at))}</time><span>${escapeHtml(shortEpoch(event.source_epoch_id))}</span></div>`;
+      item.className = `chat-item chat-item--${event.kind}`;
+      item.dataset.timelineKind = event.kind;
+      item.dataset.timelineId = event.timeline_id;
+      if (event.kind === "seller") {
+        item.innerHTML = `
+          <span class="chat-index">↳</span>
+          <div class="chat-body">
+            <div class="chat-meta"><strong class="chat-customer">Seller reply</strong><span class="chat-origin chat-origin--seller">${escapeHtml(event.mode || "seller")}</span></div>
+            <blockquote class="chat-reply-quote"><strong>${escapeHtml(event.quote.customer_display_name)}</strong><span aria-hidden="true"> · </span><span>${escapeHtml(event.quote.text)}</span></blockquote>
+            <p class="chat-text">${escapeHtml(event.text)}</p>
+          </div>
+          <div class="chat-binding"><time datetime="${escapeHtml(event.occurred_at)}">${escapeHtml(formatClock(event.occurred_at))}</time><span>Sent</span></div>`;
+      } else {
+        item.innerHTML = `
+          <span class="chat-index">${String(event.show_seq).padStart(2, "0")}</span>
+          <div class="chat-body">
+            <div class="chat-meta"><strong class="chat-customer">${escapeHtml(event.customer_display_name)}</strong><span class="chat-origin ${event.input_origin === "custom" ? "chat-origin--custom" : ""}">${escapeHtml(event.input_origin)}</span></div>
+            <p class="chat-text">${escapeHtml(event.text)}</p>
+          </div>
+          <div class="chat-binding"><time datetime="${escapeHtml(event.occurred_at)}">${escapeHtml(formatClock(event.occurred_at))}</time><span>Buyer</span></div>`;
+      }
       dom.chatFeed.append(item);
     });
-    if (nearBottom || snapshot.chat_events.length === 1) {
+    if (nearBottom || timeline.length === 1) {
       requestAnimationFrame(() => {
         dom.chatFeed.scrollTop = dom.chatFeed.scrollHeight;
       });
     }
   }
 
-  function renderCopilotInbox() {
-    const questions = snapshot.copilot_questions || [];
-    const openCount = questions.filter((question) =>
-      ["queued", "ai_working", "awaiting_review", "needs_seller"].includes(question.state),
-    ).length;
-    dom.copilotCount.textContent = `${openCount} open · ${questions.length} total`;
-    dom.copilotList.replaceChildren();
+  function renderCopilotInbox({force = false} = {}) {
+    if (!snapshot) return;
+    const questions = (snapshot.copilot_questions || [])
+      .filter((question) => OPEN_QUESTION_STATES.has(question.state))
+      .sort((left, right) => {
+        const byTime = Date.parse(right.asked_at) - Date.parse(left.asked_at);
+        return byTime || (right.question_seq || 0) - (left.question_seq || 0);
+      });
+    const nowQuestions = [];
+    const earlierQuestions = [];
+    questions.forEach((question) => {
+      if (questionAgeMs(question) <= RECENT_QUESTION_MS) nowQuestions.push(question);
+      else earlierQuestions.push(question);
+    });
+    const validIds = new Set(questions.map((question) => question.question_id));
+    [...expandedEarlierQuestions].forEach((questionId) => {
+      if (!validIds.has(questionId)) expandedEarlierQuestions.delete(questionId);
+    });
+    const signature = questions
+      .map((question) => [
+        question.question_id,
+        question.state,
+        earlierQuestions.includes(question) ? "earlier" : "now",
+        question.suggestion?.reply_text || "",
+        expandedEarlierQuestions.has(question.question_id) ? "expanded" : "collapsed",
+      ].join(":"))
+      .join("|");
+    dom.copilotCount.textContent = `${questions.length} open`;
+    dom.copilotNowCount.textContent = String(nowQuestions.length);
+    dom.copilotEarlierCount.textContent = String(earlierQuestions.length);
+    if (!force && signature === inboxBucketSignature) return;
+    inboxBucketSignature = signature;
+
+    renderQuestionList(dom.copilotNowList, nowQuestions, {earlier: false});
+    renderQuestionList(dom.copilotEarlierList, earlierQuestions, {earlier: true});
+  }
+
+  function renderQuestionList(list, questions, {earlier}) {
+    const priorScrollTop = list.scrollTop;
+    const nearNewest = priorScrollTop < 48;
+    list.replaceChildren();
     if (!questions.length) {
-      dom.copilotList.innerHTML = `<div class="copilot-empty"><strong>No questions yet.</strong><p>Buyer questions will appear here after they pass deterministic routing.</p></div>`;
+      list.innerHTML = earlier
+        ? `<div class="copilot-empty"><strong>No earlier questions.</strong><p>Unresolved questions collapse here after twenty seconds.</p></div>`
+        : `<div class="copilot-empty"><strong>No current questions.</strong><p>New buyer questions stay expanded here for twenty seconds.</p></div>`;
       return;
     }
-
     questions.forEach((question) => {
-      const suggestion = question.suggestion?.reply_text || "";
-      const editable = question.state === "awaiting_review" || question.state === "needs_seller";
-      const listing = listingById(question.bound_listing_id);
-      const stock = listing ? totalStock(listing) : null;
-      const stateLabel = questionStateLabel(question.state);
-      const card = document.createElement("article");
-      card.className = `copilot-card copilot-card--${escapeHtml(question.state)}`;
-      card.dataset.questionId = question.question_id;
-      const temporalBadge = question.previous_sku
-        ? `<span class="copilot-badge copilot-badge--previous">Previous SKU · ${escapeHtml(question.previous_sku)}</span>`
-        : listing
-          ? `<span class="copilot-badge">${escapeHtml(listing.sku)}</span>`
-          : "";
-      const facts = listing
-        ? `<div class="copilot-facts"><span>${formatMoney(listing.price_cents)}</span><span>${stock} in stock</span></div>`
-        : "";
-      const responseControl = editable
-        ? `<label class="copilot-reply-field"><span>${suggestion ? "AI draft — editable" : "Your reply"}</span><textarea data-copilot-reply maxlength="500" placeholder="Write a seller reply…">${escapeHtml(suggestion)}</textarea></label>`
-        : ["answered_by_seller", "auto_answered"].includes(question.state)
-          ? `<p class="copilot-resolution">Reply sent and receipt recorded.</p>`
-          : `<p class="copilot-resolution">${escapeHtml(question.reason_code || stateLabel)}</p>`;
-      const actions = question.state === "awaiting_review"
-        ? `<div class="copilot-actions"><button class="button button--signal" type="button" data-copilot-action="accept">Accept AI</button><button class="button button--paper" type="button" data-copilot-action="reply">Send edit</button><button class="text-button" type="button" data-copilot-action="dismiss">Dismiss</button></div>`
-        : question.state === "needs_seller"
-          ? `<div class="copilot-actions"><button class="button button--signal" type="button" data-copilot-action="reply">Send reply</button><button class="text-button" type="button" data-copilot-action="dismiss">Dismiss</button></div>`
-          : "";
+      const expanded = !earlier || expandedEarlierQuestions.has(question.question_id);
+      list.append(renderQuestionCard(question, {earlier, expanded}));
+    });
+    requestAnimationFrame(() => {
+      list.scrollTop = nearNewest ? 0 : priorScrollTop;
+    });
+  }
+
+  function renderQuestionCard(question, {earlier, expanded}) {
+    const suggestion = question.suggestion?.reply_text || "";
+    const listing = listingById(question.bound_listing_id);
+    const stock = listing ? totalStock(listing) : null;
+    const stateLabel = questionStateLabel(question.state);
+    const card = document.createElement("article");
+    card.className = `${earlier ? "copilot-earlier-row " : ""}${expanded ? "copilot-card " : ""}copilot-card--${question.state}`.trim();
+    card.dataset.questionId = question.question_id;
+    if (earlier) {
+      card.setAttribute("aria-expanded", String(expanded));
       card.innerHTML = `
-        <header class="copilot-card-header">
-          <div><strong>${escapeHtml(question.customer_display_name)}</strong><time datetime="${escapeHtml(question.asked_at)}">${escapeHtml(formatClock(question.asked_at))}</time></div>
+        <button class="copilot-earlier-summary" type="button" data-copilot-expand aria-label="${expanded ? "Collapse" : "Expand"} question from ${escapeHtml(question.customer_display_name)}">
+          <span class="copilot-earlier-meta"><strong>${escapeHtml(question.customer_display_name)}</strong><time datetime="${escapeHtml(question.asked_at)}">${escapeHtml(formatClock(question.asked_at))}</time></span>
+          <span class="copilot-question-summary">${escapeHtml(question.raw_text)}</span>
           <span class="copilot-state">${escapeHtml(stateLabel)}</span>
-        </header>
+          <span class="copilot-expand-mark" aria-hidden="true">${expanded ? "−" : "+"}</span>
+        </button>`;
+      if (!expanded) return card;
+    }
+
+    const temporalBadge = question.previous_sku
+      ? `<span class="copilot-badge copilot-badge--previous">Previous SKU · ${escapeHtml(question.previous_sku)}</span>`
+      : listing
+        ? `<span class="copilot-badge">${escapeHtml(listing.sku)}</span>`
+        : "";
+    const facts = listing
+      ? `<div class="copilot-facts"><span>${formatMoney(listing.price_cents)}</span><span>${stock} in stock</span></div>`
+      : "";
+    const responseControl = `<label class="copilot-reply-field"><span>${suggestion ? "AI draft — editable" : "Your reply"}</span><textarea data-copilot-reply maxlength="500" placeholder="Write a seller reply…">${escapeHtml(suggestion)}</textarea></label>`;
+    const actions = question.state === "awaiting_review"
+      ? `<div class="copilot-actions"><button class="button button--signal" type="button" data-copilot-action="accept">Accept AI</button><button class="button button--paper" type="button" data-copilot-action="reply">Send edit</button><button class="text-button" type="button" data-copilot-action="dismiss">Dismiss</button></div>`
+      : question.state === "needs_seller"
+        ? `<div class="copilot-actions"><button class="button button--signal" type="button" data-copilot-action="reply">Send reply</button><button class="text-button" type="button" data-copilot-action="dismiss">Dismiss</button></div>`
+        : `<p class="copilot-resolution">${escapeHtml(question.reason_code || stateLabel)}</p>`;
+    card.insertAdjacentHTML("beforeend", `
+      <div class="copilot-card-content">
+        ${earlier ? "" : `<header class="copilot-card-header"><div><strong>${escapeHtml(question.customer_display_name)}</strong><time datetime="${escapeHtml(question.asked_at)}">${escapeHtml(formatClock(question.asked_at))}</time></div><span class="copilot-state">${escapeHtml(stateLabel)}</span></header>`}
         <p class="copilot-question">${escapeHtml(question.raw_text)}</p>
         <div class="copilot-context">${temporalBadge}${facts}</div>
         ${responseControl}
-        ${actions}`;
-      dom.copilotList.append(card);
-    });
+        ${actions}
+      </div>`);
+    return card;
+  }
+
+  function questionAgeMs(question) {
+    const now = Date.now();
+    const askedAt = Date.parse(question.asked_at);
+    const directAge = now - askedAt;
+    if (Number.isFinite(directAge) && directAge >= 0 && directAge <= 300_000) {
+      return directAge;
+    }
+    if (!questionFirstSeenAt.has(question.question_id)) {
+      questionFirstSeenAt.set(question.question_id, now);
+    }
+    return Math.max(0, now - questionFirstSeenAt.get(question.question_id));
+  }
+
+  function handleCopilotPanelClick(event) {
+    const action = event.target.closest("[data-copilot-action]");
+    if (action) {
+      submitCopilotDecision(event);
+      return;
+    }
+    const row = event.target.closest(".copilot-earlier-row");
+    if (!row || event.target.closest("textarea, input, select, a")) return;
+    const questionId = row.dataset.questionId;
+    if (expandedEarlierQuestions.has(questionId)) expandedEarlierQuestions.delete(questionId);
+    else expandedEarlierQuestions.add(questionId);
+    renderCopilotInbox({force: true});
   }
 
   function renderR3Capability() {
@@ -515,11 +637,13 @@
     dom.r3Toggle.classList.toggle("is-enabled", enabled);
     dom.r3Toggle.setAttribute("aria-pressed", String(enabled));
     dom.r3Toggle.title = enabled ? "Disable bounded auto-reply" : "Enable bounded auto-reply";
+    dom.r3Toggle.disabled = resetPending || sellerSwitchPending;
+    dom.r3Disable.disabled = resetPending || sellerSwitchPending;
     dom.r3Warning.hidden = !enabled;
   }
 
   async function toggleR3(options = {}) {
-    if (!snapshot?.r3_capability || !sessionToken) return;
+    if (!snapshot?.r3_capability || !sessionToken || resetPending) return;
     const forceDisabled = options?.forceDisabled === true;
     const enabled = forceDisabled ? false : !snapshot.r3_capability.enabled;
     dom.r3Toggle.disabled = true;
@@ -547,8 +671,7 @@
       showNotice("Automation setting unchanged", error.message, {error: true});
       await refreshSnapshot().catch(() => renderR3Capability());
     } finally {
-      dom.r3Toggle.disabled = false;
-      dom.r3Disable.disabled = false;
+      renderR3Capability();
     }
   }
 
@@ -611,8 +734,9 @@
   async function submitCustomChat(event) {
     event.preventDefault();
     const rawText = dom.chatInput.value.trim();
-    if (!rawText || !sessionToken) return;
+    if (!rawText || !sessionToken || !activeListing() || resetPending) return;
     dom.chatInput.disabled = true;
+    dom.chatSend.disabled = true;
     try {
       await api(`/api/sessions/${encodeURIComponent(sessionToken)}/chat/custom`, {
         method: "POST",
@@ -623,13 +747,13 @@
     } catch (error) {
       showNotice("Message refused", error.message, {error: true});
     } finally {
-      dom.chatInput.disabled = false;
-      dom.chatInput.focus();
+      renderFixtureState();
+      if (!dom.chatInput.disabled) dom.chatInput.focus();
     }
   }
 
   async function appendPrepared(count) {
-    if (!sessionToken) return;
+    if (!sessionToken || !activeListing() || resetPending) return;
     dom.stepStream.disabled = true;
     dom.burstStream.disabled = true;
     try {
@@ -642,13 +766,12 @@
       stopFixture();
       showNotice("Prepared stream stopped", error.message, {error: true});
     } finally {
-      dom.stepStream.disabled = false;
-      dom.burstStream.disabled = false;
+      renderFixtureState();
     }
   }
 
   function startFixture() {
-    if (streamTimer) return;
+    if (streamTimer || !activeListing() || resetPending) return;
     appendPrepared(1);
     streamTimer = window.setInterval(() => appendPrepared(1), 1650);
     renderFixtureState();
@@ -661,16 +784,28 @@
   }
 
   function renderFixtureState() {
+    const canChat = Boolean(activeListing()) && !resetPending && !sellerSwitchPending;
+    if (!canChat && streamTimer) {
+      window.clearInterval(streamTimer);
+      streamTimer = null;
+    }
     const playing = Boolean(streamTimer);
     dom.streamStatus.textContent = playing ? "Fixture playing" : eventSource ? "Live sync" : "Room ready";
     dom.toggleStream.querySelector("span").textContent = playing ? "Pause fixture" : "Play fixture";
     dom.toggleStream.querySelector("svg").innerHTML = playing
       ? '<path d="M8 5h3v14H8zM14 5h3v14h-3z" />'
       : '<path d="M8 5v14l11-7z" />';
+    dom.toggleStream.disabled = !canChat;
+    dom.stepStream.disabled = !canChat;
+    dom.burstStream.disabled = !canChat;
+    dom.chatInput.disabled = !canChat;
+    dom.chatSend.disabled = !canChat;
+    dom.chatStageGuidance.hidden = canChat;
+    dom.resetDemo.disabled = resetPending || sellerSwitchPending;
   }
 
   function openOperationDialog(operationType) {
-    if (sellerSwitchPending) return;
+    if (sellerSwitchPending || resetPending) return;
     currentOperation = operationType;
     dom.dialogError.hidden = true;
     dom.dialogError.textContent = "";
@@ -684,6 +819,9 @@
 
   function dialogFields(operationType) {
     const active = activeListing();
+    if (operationType === "reset") {
+      return `<div class="dialog-field dialog-field--warning"><span>Authenticated demo scope</span><strong>${escapeHtml(snapshot.seller.display_name)} · ${escapeHtml(snapshot.show.show_id)}</strong><small>This returns fixture-visible state to its starting point. Internal version counters continue forward so stale writes remain invalid.</small></div>`;
+    }
     if (operationType === "push" || operationType === "swap") {
       const options = selectableListings(snapshot.show.active_listing_id)
         .map(
@@ -718,6 +856,10 @@
     const operation = currentOperation;
     dom.dialogConfirm.disabled = true;
     try {
+      if (operation === "reset") {
+        await resetDemo();
+        return;
+      }
       const response = await executeOperation(operation);
       snapshot = response.snapshot;
       if (response.receipt.status !== "applied") {
@@ -785,9 +927,50 @@
     });
   }
 
+  async function resetDemo() {
+    setResetPending(true);
+    try {
+      const response = await api(
+        `/api/sessions/${encodeURIComponent(sessionToken)}/demo/reset`,
+        {method: "POST"},
+      );
+      snapshot = response.snapshot;
+      selectedListingId = defaultSelectableListingId();
+      expandedEarlierQuestions.clear();
+      questionFirstSeenAt.clear();
+      inboxBucketSignature = "__reset__";
+      dom.dialog.close("reset");
+      currentOperation = null;
+      renderAll();
+      connectEvents();
+      showNotice("Demo reset", "Fixture state was restored and this seller/show history was cleared.");
+    } catch (error) {
+      dom.dialogError.textContent = error.message;
+      dom.dialogError.hidden = false;
+      showNotice("Reset failed", error.message, {error: true});
+    } finally {
+      setResetPending(false);
+      renderAll();
+    }
+  }
+
+  function setResetPending(pending) {
+    resetPending = pending;
+    if (pending) stopFixture();
+    dom.sellerSelect.disabled = pending || sellerSwitchPending;
+    dom.workspace.setAttribute("aria-busy", String(pending || sellerSwitchPending));
+    dom.resetDemo.disabled = pending || sellerSwitchPending;
+    if (snapshot) {
+      renderOperationDock();
+      renderCatalog();
+      renderR3Capability();
+      renderFixtureState();
+    }
+  }
+
   async function performUndo() {
     const receiptId = snapshot.latest_undoable_receipt_id;
-    if (!receiptId) return;
+    if (!receiptId || resetPending) return;
     dom.undoButton.disabled = true;
     try {
       const response = await api(
@@ -864,6 +1047,7 @@
       unlist: "Unlist the active pair",
       price_markdown: "Mark down the price",
       inventory_change: "Set variant inventory",
+      reset: "Reset this demo",
     }[operation];
   }
 
@@ -874,6 +1058,7 @@
       unlist: "Explicitly unlist the pair on stage. Stock does not change.",
       price_markdown: "Lower the current price without crossing the seller-configured floor.",
       inventory_change: "Set one active variant to a nonnegative absolute quantity.",
+      reset: "Clear chat, Copilot, traces, replies, receipts, marketplace history, and runtime metrics for this synthetic seller/show, then restore fixture catalog state.",
     }[operation];
   }
 
@@ -884,6 +1069,7 @@
       unlist: "Unlist pair",
       price_markdown: "Apply markdown",
       inventory_change: "Set inventory",
+      reset: "Reset demo",
     }[operation];
   }
 

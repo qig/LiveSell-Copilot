@@ -199,6 +199,38 @@ def test_fresh_r2_suggestion_needs_one_seller_decision_and_one_atomic_receipt(
     assert payload["reply"]["reply_text"] == "It is $160."
     assert payload["receipt"]["question_id"] == card["question_id"]
     assert payload["snapshot"]["copilot_questions"][0]["state"] == "answered_by_seller"
+    assert payload["snapshot"]["chat_timeline"] == [
+        {
+            "timeline_id": f"buyer:{card['event_id']}",
+            "stream_offset": payload["snapshot"]["chat_timeline"][0]["stream_offset"],
+            "kind": "buyer",
+            "occurred_at": card["asked_at"],
+            "event_id": card["event_id"],
+            "show_seq": 2,
+            "customer_display_name": "demo_tester",
+            "text": "How much is this pair?",
+            "input_origin": "custom",
+        },
+        {
+            "timeline_id": f"seller:{payload['reply']['reply_id']}",
+            "stream_offset": payload["snapshot"]["chat_timeline"][1]["stream_offset"],
+            "kind": "seller",
+            "occurred_at": payload["reply"]["created_at"],
+            "reply_id": payload["reply"]["reply_id"],
+            "question_id": card["question_id"],
+            "mode": "r2",
+            "text": "It is $160.",
+            "quote": {
+                "event_id": card["event_id"],
+                "customer_display_name": "demo_tester",
+                "text": "How much is this pair?",
+            },
+        },
+    ]
+    assert (
+        payload["snapshot"]["chat_timeline"][0]["stream_offset"]
+        < payload["snapshot"]["chat_timeline"][1]["stream_offset"]
+    )
 
     duplicate = client.post(
         f"/api/sessions/{token}/copilot/questions/{card['question_id']}/decision",
@@ -396,8 +428,13 @@ def test_browser_inbox_requires_one_visible_seller_decision(
     expect(page.locator(".copilot-card")).to_have_count(1)
 
     card.locator('[data-copilot-action="accept"]').click()
-    expect(card.locator(".copilot-state")).to_have_text("Answered")
-    expect(card.locator(".copilot-resolution")).to_contain_text("receipt recorded")
+    expect(page.locator(".copilot-card")).to_have_count(0)
+    seller_reply = page.locator('.chat-item[data-timeline-kind="seller"]')
+    expect(seller_reply).to_have_count(1)
+    expect(seller_reply.locator(".chat-reply-quote")).to_contain_text(
+        "demo_tester · How much is this pair?"
+    )
+    expect(seller_reply.locator(".chat-text")).to_have_text("It is $160.")
 
     token = page.evaluate("sessionStorage.getItem('sidestage.m2.session')")
     projection = page.evaluate(
@@ -410,4 +447,8 @@ def test_browser_inbox_requires_one_visible_seller_decision(
     assert len(projection["outbound_replies"]) == 1
     assert len(projection["reply_receipts"]) == 1
     assert projection["outbound_replies"][0]["reply_text"] == "It is $160."
+    assert [item["kind"] for item in projection["chat_timeline"]] == [
+        "buyer",
+        "seller",
+    ]
     assert not browser_errors

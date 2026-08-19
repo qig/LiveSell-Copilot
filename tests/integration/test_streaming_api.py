@@ -144,6 +144,29 @@ def test_custom_and_prepared_messages_use_one_metadata_free_ingestion_path(
     assert contaminated.status_code == 422
 
 
+def test_chat_is_rejected_before_an_active_listing_epoch_exists(
+    client: TestClient,
+) -> None:
+    token, _ = create_session(client)
+
+    custom = client.post(
+        f"/api/sessions/{token}/chat/custom",
+        json={"raw_text": "Do you have size 9?"},
+    )
+    prepared = client.post(
+        f"/api/sessions/{token}/chat/prepared",
+        json={"count": 1},
+    )
+
+    assert custom.status_code == prepared.status_code == 409
+    assert custom.json()["detail"]["code"] == "active_slot_empty"
+    assert prepared.json()["detail"]["code"] == "active_slot_empty"
+    snapshot = client.get(f"/api/sessions/{token}/snapshot").json()
+    assert snapshot["chat_events"] == []
+    assert snapshot["copilot_questions"] == []
+    assert client.app.state.model_runner.calls == ()
+
+
 def test_equal_wall_clock_messages_bind_by_atomic_show_sequence_across_swap(
     client: TestClient,
 ) -> None:
@@ -254,6 +277,8 @@ def test_sse_listener_closes_the_commit_to_wait_race() -> None:
 def test_chat_snapshots_and_sse_replay_are_tenant_isolated(client: TestClient) -> None:
     velocity_token, _ = create_session(client)
     vault_token, _ = create_session(client, OTHER_SELLER)
+    push(client, velocity_token)
+    push(client, vault_token, "lst_vault_heritage_high")
 
     client.post(
         f"/api/sessions/{velocity_token}/chat/custom",
@@ -365,8 +390,9 @@ def test_only_chat_is_exposed_to_tester_and_no_excluded_commerce_routes_exist(
 
     schema = client.get("/openapi.json").json()
     paths = "\n".join(schema["paths"])
-    for excluded in ("purchase", "bid", "cancel", "clear", "relist", "reset"):
+    for excluded in ("purchase", "bid", "cancel", "clear", "relist"):
         assert excluded not in paths
+    assert f"/api/sessions/{{session_token}}/demo/reset" in schema["paths"]
 
 
 def test_debug_state_is_backend_owned_and_tenant_scoped(client: TestClient) -> None:

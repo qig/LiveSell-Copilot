@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import socket
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 from threading import Thread
 from typing import Iterator
@@ -291,3 +292,131 @@ def test_non_ai_marketplace_flow_is_server_owned_and_reconnectable(
         path.startswith(("/api/copilot", "/api/reply", "/api/provider", "/api/model"))
         for path in api_paths
     )
+
+
+def test_reset_recent_earlier_and_independent_scroll_workflow(
+    live_server: str,
+    browser_page: Page,
+) -> None:
+    page = browser_page
+    browser_errors: list[str] = []
+    page.on(
+        "console",
+        lambda message: browser_errors.append(message.text)
+        if message.type == "error"
+        else None,
+    )
+    page.on("pageerror", lambda error: browser_errors.append(str(error)))
+
+    page.goto(f"{live_server}/app/")
+    expect(page.locator("#reset-demo")).to_be_visible()
+    expect(page.locator("#chat-input")).to_be_disabled()
+    expect(page.locator("#chat-form button[type=submit]")).to_be_disabled()
+    expect(page.locator("#toggle-stream")).to_be_disabled()
+    expect(page.locator("#step-stream")).to_be_disabled()
+    expect(page.locator("#burst-stream")).to_be_disabled()
+    expect(page.locator("#chat-stage-guidance")).to_have_text(
+        "Push a listing before sending buyer questions."
+    )
+
+    page.locator("#empty-push").click()
+    _confirm(page)
+    expect(page.locator("#chat-input")).to_be_enabled()
+    expect(page.locator("#toggle-stream")).to_be_enabled()
+
+    for message in (
+        "How much is this pair?",
+        "Do you have size 9?",
+        "Does this pair fit true to size?",
+    ):
+        page.locator("#chat-input").fill(message)
+        page.locator("#chat-form button[type=submit]").click()
+
+    now_questions = page.locator("#copilot-now-list .copilot-question")
+    expect(now_questions).to_have_text(
+        [
+            "Does this pair fit true to size?",
+            "Do you have size 9?",
+            "How much is this pair?",
+        ]
+    )
+    expect(page.locator("#copilot-earlier-list .copilot-earlier-row")).to_have_count(0)
+
+    token = _session_token(page)
+    projection = page.evaluate(
+        """async ({token}) => {
+          const response = await fetch(`/api/sessions/${encodeURIComponent(token)}/snapshot`);
+          return response.json();
+        }""",
+        {"token": token},
+    )
+    newest_asked_at = max(
+        item["asked_at"] for item in projection["copilot_questions"]
+    )
+    page.evaluate(
+        "({now}) => { Date.now = () => now; }",
+        {"now": int(datetime.fromisoformat(newest_asked_at.replace("Z", "+00:00")).timestamp() * 1000) + 21_000},
+    )
+    expect(page.locator("#copilot-now-list .copilot-card")).to_have_count(0)
+    earlier = page.locator("#copilot-earlier-list .copilot-earlier-row")
+    expect(earlier).to_have_count(3)
+    expect(earlier.locator(".copilot-question-summary")).to_have_text(
+        [
+            "Does this pair fit true to size?",
+            "Do you have size 9?",
+            "How much is this pair?",
+        ]
+    )
+    expect(earlier.first.locator("[data-copilot-reply]")).to_have_count(0)
+    earlier.first.click()
+    expect(
+        page.locator("#copilot-earlier-list .copilot-card").first.locator(
+            "[data-copilot-reply]"
+        )
+    ).to_be_visible()
+
+    page.locator("#burst-stream").click()
+    page.locator("#burst-stream").click()
+    expect(page.locator('.chat-item[data-timeline-kind="buyer"]')).to_have_count(19)
+    assert page.locator("#chat-feed").evaluate(
+        "node => getComputedStyle(node).overflowY === 'auto' && node.scrollHeight > node.clientHeight"
+    )
+    assert page.locator("#copilot-earlier-list").evaluate(
+        "node => getComputedStyle(node).overflowY === 'auto'"
+    )
+    assert page.evaluate(
+        "document.documentElement.scrollHeight <= window.innerHeight + 2"
+    )
+
+    page.locator("#reset-demo").click()
+    expect(page.locator("#operation-dialog")).to_be_visible()
+    expect(page.locator("#dialog-title")).to_have_text("Reset this demo")
+    expect(page.locator("#dialog-description")).to_contain_text(
+        "chat, Copilot, traces, replies, receipts"
+    )
+    page.locator("#dialog-confirm").click()
+    expect(page.locator("#operation-dialog")).to_be_hidden()
+    expect(page.locator("#active-sku")).to_have_text("Stage clear")
+    expect(page.locator("#event-count")).to_have_text("00")
+    expect(page.locator(".chat-item")).to_have_count(0)
+    expect(page.locator(".copilot-card")).to_have_count(0)
+    expect(page.locator(".copilot-earlier-row")).to_have_count(0)
+    expect(page.locator("#chat-input")).to_be_disabled()
+
+    page.locator("#empty-push").click()
+    _confirm(page)
+    page.locator("#chat-input").fill("Is size 10 available?")
+    page.locator("#chat-form button[type=submit]").click()
+    expect(page.locator("#event-count")).to_have_text("01")
+    expect(page.locator("#copilot-now-list .copilot-card")).to_have_count(1)
+
+    # Returning to an already-active show must converge controls after the
+    # seller-switch pending state is released.
+    page.locator("#seller-select").select_option("sel_vault_consign")
+    expect(page.locator("#active-sku")).to_have_text("Stage clear")
+    expect(page.locator("#chat-input")).to_be_disabled()
+    page.locator("#seller-select").select_option("sel_velocity_kicks")
+    expect(page.locator("#active-sku")).not_to_have_text("Stage clear")
+    expect(page.locator("#chat-input")).to_be_enabled()
+    expect(page.locator("#chat-stage-guidance")).to_be_hidden()
+    assert not browser_errors
