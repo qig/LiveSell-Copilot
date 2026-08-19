@@ -1,6 +1,6 @@
 # SideStage Technical Design Document
 
-> Status: `Accepted` — builder-approved v1 design; Milestone 2, deterministic M3B.1-M3B.4 behavior, and the original M3B.5 Optimization and Debug Session are `Verified`; latency/DBG-023 work is committed but awaits clean final verification, the reset/UI extension is `Implemented` but uncommitted, and the final live release gate is open
+> Status: `Accepted` — builder-approved v1 design; Milestone 2, deterministic M3B.1-M3B.4 behavior, and the original M3B.5 Optimization and Debug Session are `Verified`; latency/DBG-023 and the follow-up reset/UI, lifecycle, Auto-message, and SSE work are committed but await clean final verification, and the final live release gate is open
 >
 > Last updated: 2026-08-18
 >
@@ -584,7 +584,7 @@ The OpenRouter comparison adds these benchmark-only requirements:
 - Reports include requested/resolved model, provider, strategy, evaluation profile digest, provider-call count, queue/provider/parse/render/broker/end-to-end distributions, explicit all-event/answerable/model-backed/R2/R3 denominators, expected-versus-actual category/evidence/template/variant scores, timeouts, terminal-contract errors, hard safety invariants, token usage, and cost. The generated workload manifest contains fixture identity only; it does not embed a workflow/model profile.
 - A fallback, missing provider identity, changed workload digest, credential leak, or strategy mismatch invalidates the comparison rather than becoming a partial pass.
 
-The exact local run and full-suite commands are recorded at the top of this document. The Milestone 2-only closeout command, results, runtime smoke check, and evidence boundary are retained in [`docs/evidence/m2-closeout.md`](evidence/m2-closeout.md).
+The exact local run and full-suite commands are recorded in this document. No separate Milestone 2 closeout artifact is required for the challenge submission.
 
 ## 17. Code map and implementation status
 
@@ -602,7 +602,7 @@ The committed Milestone 2 implementation terminates at `734d151` and has these c
 - `tests/integration/test_marketplace_kernel.py`, `test_seller_actions.py`, and `test_streaming_api.py`: tenant, version, idempotency, receipt, compensation, temporal-attribution, and streaming contracts.
 - `tests/e2e/test_marketplace_ui.py`: server-owned desktop/mobile marketplace flow, five action types, refusal and Undo behavior, SSE convergence, reload/session restoration, and explicit proof that Copilot/model work is absent.
 
-`src/sidestage/web/server.py` and the older `tests/e2e/verify_m2_*.py` scripts remain historical M2.0/M2.1 review utilities. They are not the authoritative M2.3 run path. The milestone exit gate is `Verified`; see the retained [Milestone 2 closeout evidence](evidence/m2-closeout.md). This evidence is deliberately non-AI and makes no claim about the M3B reply path or its two-second SLO.
+`src/sidestage/web/server.py` and the older `tests/e2e/verify_m2_*.py` scripts remain historical M2.0/M2.1 review utilities. They are not the authoritative M2.3 run path. The Milestone 2 exit gate is `Verified` by the commit-bound commands recorded here. That result is deliberately non-AI and makes no claim about the M3B reply path or its two-second SLO.
 
 The committed M3A.1 foundation (`d8c997f`) has these concrete files:
 
@@ -676,7 +676,7 @@ The committed M3B runtime (`7d6c349`) and replay/evaluation slice (`6ba208a`) ad
 - `src/sidestage/app.py::create_live_app`: fail-fast environment construction of the reviewer-facing shared live runner with sanitized runtime metadata and lifespan-owned shutdown cleanup; `tests/integration/test_live_app_factory.py` covers missing configuration, strict Luna mapping, key precedence, secret exclusion, and exactly-once trace/model cleanup without a network call, plus a separately marked live test of both model calls, the R2 card, and all eight debugger stages.
 - M3B unit, integration, and Playwright tests covering M3.1 routing/retrieval/trace ownership, M3.2 profile/broker/R2, M3.3 R3 races, and M3.4 generation/replay/debugger/safety behavior.
 
-Both concrete workflow implementations preserve the accepted M3.1-M3.4 compatibility map and are `Verified` for deterministic behavior through commit `39885e4`; the exact commit-bound command `uv run pytest -q` passed there with `300 passed, 5 deselected in 52.29s`. Focused integration tests prove that `one_call_template` registers and invokes only `EvidenceTemplateAgent`, while `two_call_draft` invokes separately registered `EvidencePlannerAgent` and `ReplyDrafterAgent`. Commit `12f3bab` contains the closed scope gates and DBG-023 resolver that make exactly 72 scripted provider requests for the 72 answerable parents and deterministically resolve buyer size wording before both workflows. Commit `b5823cc` adds the active-epoch/reset/timeline contracts. The first clean M3B.6 run then exposed DBG-025/DBG-026; their current lifespan and cross-interpreter scripted-pressure fixes are `Implemented` but uncommitted. The later Auto-message/routing and SSE fan-out corrections are also `Implemented`: Auto-message is the default, the seller UI exposes only Auto-message and Manual review, unresolved cases remain seller-owned, and reconnecting same-show listeners no longer share condition-lock ownership. The current dirty-tree full suites pass with `368 passed, 5 deselected` on Python 3.9 and Python 3.13/FastAPI 0.141.1 (one deprecation warning on the latter). These results are not commit-bound final verification, and the earlier live artifact/manual Luna diagnostic are not promoted to final `Measured` evidence.
+Both concrete workflow implementations preserve the accepted M3.1-M3.4 compatibility map and are `Verified` for deterministic behavior through commit `39885e4`; the exact commit-bound command `uv run pytest -q` passed there with `300 passed, 5 deselected in 52.29s`. Focused integration tests prove that `one_call_template` registers and invokes only `EvidenceTemplateAgent`, while `two_call_draft` invokes separately registered `EvidencePlannerAgent` and `ReplyDrafterAgent`. Commit `12f3bab` contains the closed scope gates and DBG-023 resolver that make exactly 72 scripted provider requests for the 72 answerable parents and deterministically resolve buyer size wording before both workflows. Commit `b5823cc` adds the active-epoch/reset/timeline contracts. Commit `62a44ae` contains the lifespan, cross-interpreter scripted-pressure, Auto-message/routing, and SSE fan-out corrections: Auto-message is the default, the seller UI exposes only Auto-message and Manual review, unresolved cases remain seller-owned, and reconnecting same-show listeners no longer share condition-lock ownership. Its exact content passed pre-commit full suites with `368 passed, 5 deselected` on Python 3.9 and Python 3.13/FastAPI 0.141.1 (one deprecation warning on the latter). These commands were not rerun from the commit and are not promoted to final commit-bound verification; the earlier live artifact/manual Luna diagnostic is not promoted to final `Measured` evidence.
 
 For scripted livesell evaluation, the two-call cell proves semantic/accounting correctness and that its configured bounds are never exceeded; it does not infer saturation from an immediate fake provider. The release one-call cell additionally gives only the first 15 fake provider calls a bounded cooperative event-loop probe, with no wall-clock sleep, so five calls per show and fifteen globally are exercised consistently across supported Python scheduling behavior. This is synthetic capacity evidence only. Live latency and provider concurrency are measured only by the final real-model pressure command.
 
@@ -723,14 +723,12 @@ Implementation follows four independently reviewable phases with one deliberate 
 3. **M3A — General Static Agent Harness:** Domain-neutral Python task/profile/result contracts, one-request core, static terminal-call validation, scripted and live model runners, generic scheduling, tracing, deterministic evaluation, failure injection, and core latency measurement. M3A may begin after the design baseline and has no implementation or fixture dependency on M1 or M2.
 4. **M3B — Livesell Reply Adapter and Copilot:** SideStage task projection, retrieval, reply terminal intents, effect broker, R2/R3 UX, livesell generation/replay, diagnostic tracing, safety races, and end-to-end latency measurement. M3B requires M1, M2, and M3A.
 
-Each phase must have an exact run or validation command before a dependent phase begins. M3A generic artifacts and metrics remain separately labeled from M3B product evidence. Runtime phases require focused tests; static M1 artifacts use the explicit JSON checks in the implementation plan, while M2.1 reuses the existing M2.0 browser flow for visual data-projection checks. Planned paths and commands are defined in the milestone plan and become evidence only after the implementation makes them executable.
+Each phase must have an exact run or validation command before a dependent phase begins. M3A generic artifacts and metrics remain separately labeled from M3B product evidence. Runtime phases require focused tests; static M1 artifacts use the JSON checks documented above, while M2.1 reuses the existing M2.0 browser flow for visual data-projection checks. Commands become evidence only after the implementation makes them executable and records their exact results.
 
-The [v1 milestone implementation plan](plans/2026-08-17-sidestage-v1-milestones.md) incorporates the M3A/M3B split and contains a mandatory compatibility map from original M3.1-M3.4 requirements to their M3A and M3B owners. M3A may proceed independently after the design-baseline review; M3B still requires completed M1, M2, and M3A gates.
+The M3A/M3B split changes implementation ownership without narrowing the accepted M3.1-M3.4 behavior: M3A may proceed independently after the design-baseline review, while M3B still requires completed M1, M2, and M3A gates.
 
 ## 19. Related documents
 
 - [Product Requirements Document](PRD.md)
-- [v1 milestone implementation plan](plans/2026-08-17-sidestage-v1-milestones.md)
 - [AI proposal and rejection history](ai-proposal-rejection-history.md)
 - [Debugging process and evidence log](debug-process.md)
-- [M3 pressure metrics report](evidence/m3-pressure-metrics-report.md)
