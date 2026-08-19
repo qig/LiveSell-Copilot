@@ -2,7 +2,7 @@
 
 > Status: `Accepted` — the local P0 product surface is `Verified` at code head `3fda622`; the current-tree live-model latency qualification remains open and is not `Measured`
 >
-> Last updated: 2026-08-18
+> Last updated: 2026-08-19
 >
 > Primary depth: Agentic outbound-reply write safety under live state changes
 
@@ -13,6 +13,23 @@ SideStage is a real-time copilot for sneaker live sellers. It keeps buyer chat, 
 The product helps a seller answer high-intent questions without guessing. It may prepare a reply for review or send a narrowly bounded automatic message, but only when the answer is grounded in current catalog, listing, inventory, policy, or packaged product-research data. Buyer chat never authorizes a marketplace operation.
 
 The P0 prototype is a synthetic technical demonstration built around a Whatnot-like emulator. It demonstrates product behavior and safety under live pressure; it does not prove GMV lift, conversion improvement, or reduced seller workload.
+
+### 1.1 Reviewer walkthrough
+
+Reviewer entry point: [https://livesell-copilot.onrender.com/app/](https://livesell-copilot.onrender.com/app/). The reviewer username and demo password are supplied separately in the submission access notes; the provider key is never shared with a reviewer or browser.
+
+Use the protected seller workspace on a desktop-sized browser for the intended two-column presentation:
+
+1. **Push a listing first.** Choose an in-stock product from the Catalog rail and use **Push** in the seller panel. Mock or custom buyer chat is intentionally unavailable until the show has one trusted active listing.
+2. **Generate buyer traffic.** Select **Mock livesell** to submit prepared buyer messages at the demo cadence and observe FIFO queue pressure, or type a custom buyer message in Live Room. The shared challenge deployment keeps the batch **Burst ×8** control disabled to bound reviewer key usage.
+3. **Exercise the five seller operations.** The seller panel exposes exactly **Push**, **Swap**, **Unlist**, **Mark down**, and **Inventory**. These are explicit seller actions; buyer text and the reply model cannot invoke them.
+4. **Start with Auto-message.** A new or reset show starts with **Auto-message** enabled. Turn it off at any time to use **Manual review**; already sent replies remain visible and auditable.
+5. **Observe AI-handled versus seller-needed routing.** A supported, fully grounded question moves through **Drafting** and becomes **Auto answered** when Auto-message is authorized, or **Ready for review** in Manual review. Missing, conflicting, stale, ambiguous, unsupported, or judgment-heavy questions show **Needs you** and remain for the seller. SideStage never guesses merely to force an automatic reply.
+6. **Read the open-question panes.** On desktop, open questions from the last twenty seconds appear expanded in **Now** on the left. Older unresolved questions move to collapsed **Earlier** rows on the right. Each pane is newest-first. The separate Live Room remains the chronological buyer-and-seller chat timeline.
+7. **Switch synthetic sellers.** Use the Seller selector to try VelocityKicks, VaultConsign, and RotationKicks. Each seller has isolated catalog, inventory, policy, show state, and prepared-message data designed to exercise different cases.
+8. **Inspect the Ledger.** Open **Ledger** to view the persisted event, listing-epoch, operation/reply receipt, routing, evidence, guardrail, stage, and latency trace behind the seller-facing result.
+
+SideStage implemented and benchmarked two registered reply workflows against the same scripted workload: `one_call_template`, where one agent selects trusted evidence and an approved reply template, and `two_call_draft`, where a planner and drafter run as separate registered agents. The protected reviewer deployment deliberately fixes the lower-latency `one_call_template` workflow and **GPT-5.6 Luna** as its real-time copilot model. The Ledger exposes that active runtime and its traces; the broader development harness retains both workflows for comparison. This selection is prototype engineering evidence, not a claim that the final live p95 latency gate has already been met.
 
 ## 2. Target sellers
 
@@ -129,8 +146,9 @@ P0 includes:
 | Synthetic sellers, chat, marketplace emulator, workspace, five operations, receipts, Undo, and temporal listing behavior | `Verified` deterministically at `3fda622` |
 | Grounded Copilot Inbox, Manual review, Auto-message, seller edits, research, safety races, and debugger | `Verified` deterministically at `3fda622` |
 | Protected local reviewer boundary | `Verified` at `3fda622` |
-| Vercel reviewer routing correction | `Implemented` in the working tree; not yet commit-bound `Verified` |
-| Restart-safe reviewer session on one persistent SQLite instance, plus portable Docker/Render deployment | `Implemented` and container-restart tested in the working tree; not yet commit-bound `Verified` |
+| Vercel diagnostic routing correction | `Implemented` at `6c8afeb`; Vercel remains intentionally unsupported for reviewer sessions |
+| Restart-safe reviewer session on one persistent SQLite instance, plus portable Docker/Render deployment | `Implemented` at `6c8afeb`, container-restart tested, and covered by the commit-bound `380 passed, 5 deselected` deterministic run; authenticated remote restart smoke remains pending |
+| Protected Render reviewer service and disk-compatible Blueprint | Live `/healthz` and anonymous Basic-Auth challenge observed after `f7d03ab`; authenticated end-to-end and restart smoke remain pending |
 | Current committed live configuration with at least 95% semantic correctness, zero hard-safety violations, and answerable-question p95 below two seconds | **P0 release gate open** |
 
 P1 begins after the P0 release gate:
@@ -189,7 +207,7 @@ These are future-pilot success hypotheses, not measured submission results.
 
 - Select the final pinned live model/provider with fallback disabled.
 - Retain a clean, current-commit live artifact proving semantic correctness, hard-safety invariants, and answerable-question p95 below two seconds.
-- Publish the final reviewer URL and credentials, or provide the exact supported local run command and access notes.
+- Complete the authenticated Render end-to-end and restart smoke, then provide the reviewer password separately in the submission access notes.
 
 ## 12. Related documents
 
