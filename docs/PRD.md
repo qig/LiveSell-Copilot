@@ -129,61 +129,22 @@ Product research is triggered only by a buyer question that needs product knowle
 
 P0 uses a packaged, source-backed sneaker corpus covering release date, SKU and colorway, MSRP, materials, sizing guidance, authenticity, and condition. Each fact includes provenance and freshness metadata. Missing, stale, conflicting, or unsupported research becomes **Needs seller**. Live open-web research is out of scope.
 
-## 8. P0 scope and delivery status
+## 8. P0 scope
 
-P0 includes:
+P0 is the synthetic three-seller workflow described above: prepared or custom buyer chat, grounded Manual review and bounded Auto-message replies, five explicit seller operations with conditional Undo, packaged product research, Reset, Ledger, and protected reviewer access.
 
-- Three differentiated seller personas with isolated catalogs, policies, listings, variants, and inventory.
-- Prepared randomized chat, custom test messages, deterministic replay, and adversarial cases.
-- The two-surface seller workspace and separate developer debugger.
-- The five seller operations, internal receipts, safe refusals, and conditional Undo.
-- Grounded Manual review and bounded Auto-message reply paths.
-- Product research from the packaged corpus.
-- Backend evaluation, failure injection, latency accounting, and protected reviewer access.
-
-| P0 product promise | Status |
-| --- | --- |
-| Synthetic sellers, chat, marketplace emulator, workspace, five operations, receipts, Undo, and temporal listing behavior | `Verified` deterministically at `3fda622` |
-| Grounded Copilot Inbox, Manual review, Auto-message, seller edits, research, safety races, and debugger | `Verified` deterministically at `3fda622` |
-| Protected local reviewer boundary | `Verified` at `3fda622` |
-| Vercel diagnostic routing correction | `Implemented` at `6c8afeb`; Vercel remains intentionally unsupported for reviewer sessions |
-| Restart-safe reviewer session on one persistent SQLite instance, plus portable Docker/Render deployment | `Implemented` at `6c8afeb`, container-restart tested, and covered by the commit-bound `380 passed, 5 deselected` deterministic run; authenticated remote restart smoke remains pending |
-| Protected Render reviewer service and disk-compatible Blueprint | Live `/healthz` and anonymous Basic-Auth challenge observed after `f7d03ab`; authenticated end-to-end and restart smoke remain pending |
-| Current committed live configuration with at least 95% semantic correctness, zero hard-safety violations, and answerable-question p95 below two seconds | **P0 release gate open** |
-
-P1 begins after the P0 release gate:
-
-- Add true R0 Shadow mode and seller-handling-time instrumentation.
-- Execute the future three-seller pilot.
-- Replace local runtime infrastructure with shared durable services only if multi-instance hosting requires it.
-
-Out of scope for v1:
-
-- A production Whatnot or other external marketplace integration.
-- Real customer data or production retention behavior.
-- Video broadcasting, checkout, payments, fulfillment, purchase, bidding, auction, offer, giveaway, cancellation, return, or refund workflows.
-- Seller-invoked or live open-web research.
-- AI-recommended, natural-language, preauthorized, or independent marketplace actions.
-- Open-ended auto-reply, unrestricted model prose in Auto-message, durable buyer memory, or a dynamic multi-step agent/tool loop.
-- Claims that synthetic evaluation proves GMV, conversion, or operator-load impact.
+It does not include a production marketplace integration or real customer data; broadcasting, checkout, payment, fulfillment, or post-purchase workflows; live open-web research; AI-authorized seller operations; unrestricted automatic replies; or claims that synthetic evaluation proves business impact.
 
 ## 9. Prototype acceptance metrics
 
-The default pressure profile emits 120 chat events per seller over 30 seconds, including 60 noise/reaction events, 20 duplicate events, 24 unique answerable questions, 8 ambiguous or unsupported questions, 8 prompt-injection attempts, and one 20-event burst inside two seconds. The detailed generation and evaluation contract belongs to the TDD.
-
-P0 succeeds when:
-
 | Measure | Target |
 | --- | --- |
-| Grounded reply latency | Answerable-question end-to-end p95 below 2 seconds |
-| Semantic correctness | At least 95% of answerable questions produce the expected safe category and evidence basis |
-| Ambiguous, unsupported, and adversarial handling | 100% abstain, escalate, or answer safely without unauthorized behavior |
-| Tenant and write safety | Zero cross-seller leakage and zero unauthorized, stale, duplicate, or below-floor writes |
-| Action auditability | 100% of attempted seller operations produce an appropriate receipt; Undo compensates or refuses without overwriting newer state |
-| Event and question integrity | Zero lost accepted events, zero duplicate effects, and valid lifecycle attribution |
-| Traceability | Every eligible question exposes a complete backend trace and latency breakdown |
+| Reply quality and latency | At least 95% semantic correctness and answerable-question end-to-end p95 below 2 seconds |
+| Safe uncertainty handling | 100% of ambiguous, unsupported, and adversarial cases abstain, escalate, or answer safely |
+| Tenant and write safety | Zero cross-seller leakage or unauthorized, stale, duplicate, or below-floor writes |
+| Auditability and integrity | Every seller operation has a receipt, every eligible question has a trace, and no accepted event is lost |
 
-Synthetic results validate technical behavior only. They are not business-impact measurements.
+The workload and evaluator details belong to the TDD. Synthetic results validate technical behavior only, not business impact.
 
 ## 10. Future three-seller pilot
 
@@ -203,13 +164,7 @@ Future business hypotheses:
 
 These are future-pilot success hypotheses, not measured submission results.
 
-## 11. Remaining P0 release confirmations
-
-- Select the final pinned live model/provider with fallback disabled.
-- Retain a clean, current-commit live artifact proving semantic correctness, hard-safety invariants, and answerable-question p95 below two seconds.
-- Complete the authenticated Render end-to-end and restart smoke, then provide the reviewer password separately in the submission access notes.
-
-## 12. Related documents
+## Related documents
 
 - [Technical Design Document](TDD.md) — architecture, data contracts, agent workflows, guardrails, persistence, latency, deployment, and tests
 - [AI proposal and rejection history](ai-proposal-rejection-history.md)
