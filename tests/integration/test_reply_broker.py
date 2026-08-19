@@ -75,6 +75,7 @@ def broker_runtime(tmp_path: Path):
             show_id=SHOW,
             bound_listing=bound,
             observed_at=NOW,
+            question="What is the current price?",
         ),
         EvidenceRequest(
             intent=AnalysisIntent.ANSWERABLE,
@@ -168,6 +169,58 @@ def test_supported_reply_is_recomputed_from_trusted_evidence_for_r2_review(
     assert decision.validated_category is AnswerCategory.PRICE
     assert decision.reply_text == "It is $160."
     assert decision.evidence_ids == (price_id,)
+
+
+@pytest.mark.parametrize(
+    "wrong_claim",
+    (
+        "US W 9: 2 available",
+        "US M 9: 20 available",
+    ),
+)
+def test_wrong_system_audience_or_quantity_cannot_use_exact_variant_evidence(
+    broker_runtime,
+    wrong_claim: str,
+) -> None:
+    _database, _marketplace, _authority, broker, routing, _snapshot = broker_runtime
+    context = RetrievalContext(
+        question_id="qst_broker_variant",
+        trace_id="trc_broker_variant",
+        analysis_id="ana_broker_variant",
+        seller_id=SELLER,
+        show_id=SHOW,
+        bound_listing=routing.bound_listing,
+        observed_at=NOW,
+        question="Do you have men's US size 9?",
+    )
+    retrieval = broker.retriever.retrieve(
+        context,
+        EvidenceRequest(
+            intent=AnalysisIntent.ANSWERABLE,
+            answer_category=AnswerCategory.AVAILABILITY,
+            required_fact_types=(FactType.VARIANT_AVAILABILITY,),
+        ),
+    )
+    assert retrieval.snapshot is not None
+    stock_id = next(
+        record.evidence_id
+        for record in retrieval.snapshot.records
+        if record.fact_type is FactType.VARIANT_AVAILABILITY
+    )
+
+    decision = broker.evaluate(
+        _reply(
+            reply_text=wrong_claim,
+            answer_category="availability",
+            reply_span=wrong_claim,
+            evidence_ids=(stock_id,),
+        ),
+        routing.model_copy(update={"normalized_text": "do you have mens us size 9"}),
+        retrieval.snapshot,
+    )
+
+    assert decision.outcome is BrokerOutcome.NEEDS_SELLER
+    assert decision.reason_code == "unsupported_claim"
 
 
 @pytest.mark.parametrize(

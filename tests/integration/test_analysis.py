@@ -69,7 +69,6 @@ def test_analysis_makes_one_bounded_non_effect_request_and_validates_output() ->
                     "intent": "answerable",
                     "answer_category": "availability",
                     "product_mentions": ["Aero Dash"],
-                    "variant_mentions": ["US M 9"],
                     "required_fact_types": ["variant_availability"],
                     "query_terms": [],
                 }
@@ -153,9 +152,21 @@ def test_analysis_makes_one_bounded_non_effect_request_and_validates_output() ->
                     "answer_category": "price",
                     "required_fact_types": ["current_price"],
                     "product_mentions": [],
-                    "variant_mentions": [],
                     "query_terms": [],
                     "seller_id": "sel_attacker",
+                }
+            ),
+            AnalysisFailureCode.MALFORMED_REQUEST,
+        ),
+        (
+            _response(
+                {
+                    "intent": "answerable",
+                    "answer_category": "availability",
+                    "required_fact_types": ["variant_availability"],
+                    "product_mentions": [],
+                    "variant_mentions": ["US M 9"],
+                    "query_terms": [],
                 }
             ),
             AnalysisFailureCode.MALFORMED_REQUEST,

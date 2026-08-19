@@ -43,6 +43,7 @@ _FACT_CATEGORY = {
     FactType.LISTING_IDENTITY: AnswerCategory.PRODUCT_RESEARCH,
     FactType.CURRENT_PRICE: AnswerCategory.PRICE,
     FactType.VARIANT_AVAILABILITY: AnswerCategory.AVAILABILITY,
+    FactType.AVAILABILITY_SUMMARY: AnswerCategory.AVAILABILITY,
     FactType.SHIPPING_POLICY: AnswerCategory.SHIPPING,
     FactType.PAYMENT_POLICY: AnswerCategory.PAYMENT,
     FactType.RETURNS_POLICY: AnswerCategory.RETURNS,
@@ -257,6 +258,8 @@ class ReplyEffectBroker:
         if len(factual) != 1:
             return None
         record = factual[0]
+        if record.fact_type is FactType.AVAILABILITY_SUMMARY:
+            return None
         if not _r3_question_matches(routing.normalized_text, category, record):
             return None
         rendered = _render_r3_reply(category, record, voice)
@@ -338,7 +341,7 @@ class ReplyEffectBroker:
             ReplyTemplateId.SHIPPING_POLICY: "shipping",
             ReplyTemplateId.PAYMENT_POLICY: "payment",
             ReplyTemplateId.RETURNS_POLICY: "returns",
-            ReplyTemplateId.AVAILABILITY_SUMMARY: "available variants",
+            ReplyTemplateId.AVAILABILITY_SUMMARY: "availability",
             ReplyTemplateId.RELEASE_DATE: "release date",
             ReplyTemplateId.MSRP: "msrp",
             ReplyTemplateId.MATERIALS: "materials",
@@ -380,14 +383,23 @@ def _record_supports_span(span: str, record: EvidenceRecord) -> bool:
         quantity = quantity_match.group(0) if quantity_match else None
         normalized_span = span.casefold()
         label_tokens = [token for token in re.findall(r"[a-z0-9.]+", label.casefold()) if token]
-        meaningful_label = label_tokens[-1:] if label_tokens else []
-        label_supported = all(token in normalized_span for token in meaningful_label)
-        availability_supported = (
-            (quantity is not None and quantity in normalized_span)
-            or "available" in normalized_span
-            or (quantity == "0" and "sold out" in normalized_span)
-        )
+        span_tokens = set(re.findall(r"[a-z0-9.]+", normalized_span))
+        label_supported = bool(label_tokens) and all(token in span_tokens for token in label_tokens)
+        remaining_numbers = re.findall(r"\d+(?:\.\d+)?", normalized_span)
+        for label_number in re.findall(r"\d+(?:\.\d+)?", label.casefold()):
+            if label_number in remaining_numbers:
+                remaining_numbers.remove(label_number)
+        if remaining_numbers:
+            availability_supported = quantity is not None and all(
+                number == quantity for number in remaining_numbers
+            )
+        else:
+            availability_supported = "available" in normalized_span or (
+                quantity == "0" and "sold out" in normalized_span
+            )
         return label_supported and availability_supported
+    if record.fact_type is FactType.AVAILABILITY_SUMMARY:
+        return " ".join(span.casefold().split()) == " ".join(record.value.casefold().split())
     value_tokens = set(re.findall(r"[a-z0-9]+", record.value.casefold()))
     span_tokens = set(re.findall(r"[a-z0-9]+", span.casefold()))
     if not span_tokens:

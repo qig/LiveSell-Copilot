@@ -5,9 +5,11 @@ import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import pytest
 
 from sidestage.agent_core import ModelResponse, ModelTerminalCall
 from sidestage.app import create_app
+from sidestage.storage.repositories import _evidence_id
 
 
 SELLER = "sel_velocity_kicks"
@@ -45,7 +47,12 @@ class TemplateRunner:
         )
 
 
-def _run_question(tmp_path: Path, runner: TemplateRunner) -> tuple[dict, object]:
+def _run_question(
+    tmp_path: Path,
+    runner,
+    *,
+    question: str = "How much is this pair?",
+) -> tuple[dict, object]:
     app = create_app(
         database_path=tmp_path / "template.sqlite3",
         wall_clock=lambda: FIXED_TIME,
@@ -63,7 +70,7 @@ def _run_question(tmp_path: Path, runner: TemplateRunner) -> tuple[dict, object]
         assert push.status_code == 200
         response = client.post(
             f"/api/sessions/{token}/chat/custom",
-            json={"raw_text": "How much is this pair?"},
+            json={"raw_text": question},
         )
         assert response.status_code == 201
         return response.json(), app
@@ -100,3 +107,112 @@ def test_template_miss_never_falls_back_to_the_two_call_workflow(tmp_path: Path)
     assert len(runner.calls) == 1
     assert result["broker_decision"]["outcome"] == "needs_seller"
     assert result["reason_code"] == "ambiguous_question"
+
+
+class AvailabilityTemplateRunner:
+    def __init__(self, *, selected_evidence_id: str | None = None) -> None:
+        self.selected_evidence_id = selected_evidence_id
+        self.calls = []
+
+    async def run(self, invocation):
+        self.calls.append(invocation)
+        evidence = invocation.request.model_input.to_dict()["evidence"]
+        exact = [item for item in evidence if item["fact_type"] == "variant_availability"]
+        summaries = [item for item in evidence if item["fact_type"] == "availability_summary"]
+        if summaries:
+            assert len(summaries) == 1
+            tool_name = "reply_availability_summary"
+            evidence_id = summaries[0]["evidence_id"]
+        else:
+            assert len(exact) == 1
+            tool_name = "reply_exact_variant_availability"
+            evidence_id = exact[0]["evidence_id"]
+        return ModelResponse(
+            model_id="scripted-template-availability",
+            terminal_calls=(
+                ModelTerminalCall(
+                    tool_name=tool_name,
+                    arguments_json=json.dumps(
+                        {"evidence_ids": [self.selected_evidence_id or evidence_id]}
+                    ),
+                ),
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "wording",
+    ("US M 9", "9 M US", "Men's US 9", "9 for men", "9 for man"),
+)
+def test_one_call_exact_size_wording_projects_and_renders_one_trusted_variant(
+    tmp_path: Path,
+    wording: str,
+) -> None:
+    runner = AvailabilityTemplateRunner()
+
+    response, _app = _run_question(
+        tmp_path,
+        runner,
+        question=f"Is {wording} available?",
+    )
+
+    result = response["pipeline_results"][0]
+    model_evidence = runner.calls[0].request.model_input.to_dict()["evidence"]
+    variants = [item for item in model_evidence if item["fact_type"] == "variant_availability"]
+    assert len(variants) == 1
+    assert variants[0]["value"] == "US M 9: 2 available"
+    assert result["broker_decision"]["outcome"] == "review"
+    assert result["broker_decision"]["reply_text"] == "Availability: US M 9: 2 available"
+    assert response["snapshot"]["outbound_replies"] == []
+
+
+@pytest.mark.parametrize(
+    "question",
+    ("What sizes are available?", "How many pairs are left across all sizes?"),
+)
+def test_one_call_general_availability_projects_one_aggregate_not_all_variants(
+    tmp_path: Path,
+    question: str,
+) -> None:
+    runner = AvailabilityTemplateRunner()
+
+    response, _app = _run_question(tmp_path, runner, question=question)
+
+    result = response["pipeline_results"][0]
+    model_evidence = runner.calls[0].request.model_input.to_dict()["evidence"]
+    summaries = [item for item in model_evidence if item["fact_type"] == "availability_summary"]
+    assert len(summaries) == 1
+    assert not any(item["fact_type"] == "variant_availability" for item in model_evidence)
+    assert "Total available: 7 pairs" in summaries[0]["value"]
+    assert result["broker_decision"]["outcome"] == "review"
+    assert result["broker_decision"]["template_id"] == "reply_availability_summary"
+
+
+@pytest.mark.parametrize(
+    "selected_evidence_id",
+    (
+        "evd_fabricated_variant",
+        _evidence_id(
+            SELLER,
+            LISTING,
+            "variant_availability:var_velocity_aero_dash_10",
+        ),
+    ),
+)
+def test_one_call_fabricated_or_wrong_real_variant_cannot_render_or_publish(
+    tmp_path: Path,
+    selected_evidence_id: str,
+) -> None:
+    runner = AvailabilityTemplateRunner(selected_evidence_id=selected_evidence_id)
+
+    response, _app = _run_question(
+        tmp_path,
+        runner,
+        question="Is 9 for men available?",
+    )
+
+    result = response["pipeline_results"][0]
+    assert result["status"] == "failed"
+    assert result["reason_code"] == "template_render_failed"
+    assert result["publication"]["state"] == "needs_seller"
+    assert response["snapshot"]["outbound_replies"] == []

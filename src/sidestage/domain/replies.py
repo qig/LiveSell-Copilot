@@ -83,6 +83,7 @@ class FactType(str, Enum):
     LISTING_IDENTITY = "listing_identity"
     CURRENT_PRICE = "current_price"
     VARIANT_AVAILABILITY = "variant_availability"
+    AVAILABILITY_SUMMARY = "availability_summary"
     SHIPPING_POLICY = "shipping_policy"
     PAYMENT_POLICY = "payment_policy"
     RETURNS_POLICY = "returns_policy"
@@ -234,7 +235,6 @@ class TemplateSelectionIntent(FrozenReplyContract):
 
     template_id: ReplyTemplateId
     evidence_ids: Annotated[Tuple[EvidenceId, ...], Field(max_length=8)] = ()
-    variant_id: Optional[EntityId] = None
     identity_field: Optional[ListingIdentityField] = None
     reason_code: Optional[AbstentionReason] = None
 
@@ -251,21 +251,27 @@ class TemplateSelectionIntent(FrozenReplyContract):
         if not safe_terminal and not self.evidence_ids:
             raise ValueError("reply template requires selected evidence_ids")
         if self.template_id is ReplyTemplateId.EXACT_VARIANT_AVAILABILITY:
-            if self.variant_id is None:
-                raise ValueError("exact variant template requires variant_id")
+            if len(self.evidence_ids) != 1:
+                raise ValueError("exact variant template requires one selected evidence ID")
             if self.identity_field is not None or self.reason_code is not None:
-                raise ValueError("exact variant template accepts only variant_id")
+                raise ValueError("exact variant template accepts only evidence_ids")
+            return self
+        if self.template_id is ReplyTemplateId.AVAILABILITY_SUMMARY:
+            if len(self.evidence_ids) != 1:
+                raise ValueError("availability summary requires one aggregate evidence ID")
+            if self.identity_field is not None or self.reason_code is not None:
+                raise ValueError("availability summary accepts only evidence_ids")
             return self
         if self.template_id is ReplyTemplateId.LISTING_IDENTITY:
             if self.identity_field is None:
                 raise ValueError("listing identity template requires identity_field")
-            if self.variant_id is not None or self.reason_code is not None:
+            if self.reason_code is not None:
                 raise ValueError("listing identity template accepts only identity_field")
             return self
         if safe_terminal:
             if self.reason_code is None:
                 raise ValueError("safe terminal template requires reason_code")
-            if self.variant_id is not None or self.identity_field is not None:
+            if self.identity_field is not None:
                 raise ValueError("safe terminal template accepts only reason_code")
             if (
                 self.template_id is ReplyTemplateId.NO_RESPONSE
@@ -277,11 +283,8 @@ class TemplateSelectionIntent(FrozenReplyContract):
             ):
                 raise ValueError("no_response requires a no-response reason")
             return self
-        if any(
-            value is not None
-            for value in (self.variant_id, self.identity_field, self.reason_code)
-        ):
-            raise ValueError("selected template does not accept variant_id, identity_field, or reason_code")
+        if any(value is not None for value in (self.identity_field, self.reason_code)):
+            raise ValueError("selected template does not accept identity_field or reason_code")
         return self
 
 

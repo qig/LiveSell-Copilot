@@ -145,7 +145,6 @@ def test_closed_reply_contracts_are_immutable_and_forbid_authority_extras() -> N
         intent=AnalysisIntent.ANSWERABLE,
         answer_category=AnswerCategory.AVAILABILITY,
         product_mentions=("Aero Dash",),
-        variant_mentions=("US M 9",),
         required_fact_types=(FactType.VARIANT_AVAILABILITY,),
         query_terms=("Aero Dash US M 9",),
     )

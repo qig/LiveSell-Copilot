@@ -53,13 +53,11 @@ class EvidenceRequest(FrozenCopilotContract):
     intent: AnalysisIntent
     answer_category: AnswerCategory
     product_mentions: Annotated[Tuple[NonEmptyText, ...], Field(max_length=4)] = ()
-    variant_mentions: Annotated[Tuple[NonEmptyText, ...], Field(max_length=4)] = ()
     required_fact_types: Annotated[Tuple[FactType, ...], Field(max_length=8)] = ()
     query_terms: Annotated[Tuple[NonEmptyText, ...], Field(max_length=6)] = ()
 
     @field_validator(
         "product_mentions",
-        "variant_mentions",
         "required_fact_types",
         "query_terms",
     )
@@ -115,6 +113,15 @@ class EvidenceRecord(FrozenCopilotContract):
             "source_version": self.source_version,
             "observed_at": self.observed_at.isoformat().replace("+00:00", "Z"),
             "provenance": self.provenance,
+        }
+
+    def template_projection(self) -> dict:
+        """Expose only fields required for bounded template/evidence selection."""
+
+        return {
+            "evidence_id": self.evidence_id,
+            "fact_type": self.fact_type.value,
+            "value": self.value,
         }
 
 
@@ -241,13 +248,14 @@ class TemplateSelectionTask(FrozenCopilotContract):
     def model_projection(self) -> dict:
         return {
             "question": {
-                "question_id": self.question_id,
                 "text": self.question,
-                "asked_at": self.asked_at.isoformat().replace("+00:00", "Z"),
             },
-            "bound_listing": self.bound_listing.model_dump(mode="json"),
+            "bound_listing": {
+                "listing_id": self.bound_listing.listing_id,
+                "sku": self.bound_listing.sku,
+            },
             "evidence": [
-                record.model_projection()
+                record.template_projection()
                 for record in sorted(
                     self.evidence_snapshot.records,
                     key=lambda item: item.evidence_id,

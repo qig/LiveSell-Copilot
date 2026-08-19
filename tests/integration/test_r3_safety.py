@@ -48,7 +48,6 @@ class R3ScenarioRunner:
                                 "intent": "answerable",
                                 "answer_category": category,
                                 "product_mentions": ["Aero Dash"],
-                                "variant_mentions": variants,
                                 "required_fact_types": [fact],
                                 "query_terms": [],
                             }

@@ -40,7 +40,7 @@ class WorkTicket:
 
 
 class LivesellWorkScheduler:
-    """Admit at most 64 candidates/show, four/show, and twelve globally."""
+    """Admit at most 64 candidates/show, five/show, and fifteen globally."""
 
     def __init__(self, *, monotonic: Callable[[], float]) -> None:
         self.monotonic = monotonic

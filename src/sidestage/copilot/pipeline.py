@@ -455,6 +455,7 @@ async def process_customer_reply(
             current_task.add_done_callback(
                 lambda _task, ticket=work_ticket: services.work_scheduler.release(ticket)
             )
+        scheduler_state = services.work_scheduler.snapshot()
         services.trace_recorder.artifact(
             TraceStage.LLM_ANALYSIS,
             trace_id=trace_id,
@@ -462,9 +463,9 @@ async def process_customer_reply(
             payload={
                 "queue_ms": queue_ms,
                 "depth_at_enqueue": work_ticket.depth_at_enqueue,
-                "per_show_capacity": 64,
-                "per_show_concurrency": 4,
-                "global_concurrency": 12,
+                "per_show_capacity": scheduler_state["per_show_capacity"],
+                "per_show_concurrency": scheduler_state["per_show_concurrency"],
+                "global_concurrency": scheduler_state["global_concurrency"],
             },
         )
 
@@ -611,6 +612,7 @@ async def process_customer_reply(
                     show_id=event.show_id,
                     bound_listing=routing.bound_listing,
                     observed_at=services.wall_clock(),
+                    question=event.raw_text,
                 )
             )
         else:
@@ -623,6 +625,7 @@ async def process_customer_reply(
                     show_id=event.show_id,
                     bound_listing=routing.bound_listing,
                     observed_at=services.wall_clock(),
+                    question=event.raw_text,
                 ),
                 analysis.request,
             )

@@ -41,7 +41,6 @@ class GoldenDemoRunner:
                         "intent": "adversarial",
                         "answer_category": "other",
                         "product_mentions": [],
-                        "variant_mentions": [],
                         "required_fact_types": [],
                         "query_terms": [],
                     },
@@ -54,7 +53,6 @@ class GoldenDemoRunner:
                         "intent": "answerable",
                         "answer_category": "product_research",
                         "product_mentions": ["Aero Dash"],
-                        "variant_mentions": [],
                         "required_fact_types": ["release_date"],
                         "query_terms": ["Aero Dash release date"],
                     },
@@ -66,7 +64,6 @@ class GoldenDemoRunner:
                     "intent": "answerable",
                     "answer_category": "price",
                     "product_mentions": ["Aero Dash"],
-                    "variant_mentions": [],
                     "required_fact_types": ["current_price"],
                     "query_terms": [],
                 },
@@ -249,7 +246,7 @@ def test_golden_demo_proves_review_auto_research_race_and_debugger(
             injection_card = _card(page, injection_question)
             expect(injection_card.locator(".copilot-state")).to_have_text("Dismissed")
             expect(injection_card.locator(".copilot-resolution")).to_contain_text(
-                "adversarial"
+                "prompt_injection"
             )
 
             race_question = "Could you tell me the current price for the Aero Dash?"
@@ -308,7 +305,7 @@ def test_golden_demo_proves_review_auto_research_race_and_debugger(
             screenshot = tmp_path / "m3b-5-golden-debugger.png"
             page.screenshot(path=screenshot, full_page=True)
             assert screenshot.stat().st_size > 0
-            assert len(runner.calls) == 9
+            assert len(runner.calls) == 8
             assert not browser_errors
             context.close()
             browser.close()

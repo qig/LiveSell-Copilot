@@ -60,7 +60,6 @@ class _SafetyRunner:
                     "intent": "answerable",
                     "answer_category": category,
                     "product_mentions": product_mentions,
-                    "variant_mentions": variants,
                     "required_fact_types": [fact],
                     "query_terms": [],
                 },

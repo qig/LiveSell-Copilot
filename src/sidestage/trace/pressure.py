@@ -231,15 +231,18 @@ class PressureScriptedRunner:
                 record = matching[0]
                 return _tool_response(
                     "reply_exact_variant_availability",
-                    {
-                        "evidence_ids": [record["evidence_id"]],
-                        "variant_id": record["source_ref"].rsplit("/", 1)[-1],
-                    },
+                    {"evidence_ids": [record["evidence_id"]]},
                     "scripted-pressure-template",
                 )
             return _tool_response(
                 "reply_availability_summary",
-                {"evidence_ids": [record["evidence_id"] for record in records]},
+                {
+                    "evidence_ids": [
+                        record["evidence_id"]
+                        for record in evidence
+                        if record["fact_type"] == "availability_summary"
+                    ]
+                },
                 "scripted-pressure-template",
             )
         records = [item for item in evidence if item["fact_type"] == fact_type]
@@ -884,7 +887,6 @@ def _analysis_payload(
         "intent": intent,
         "answer_category": category,
         "product_mentions": [],
-        "variant_mentions": list(variants),
         "required_fact_types": [fact_type] if fact_type else [],
         "query_terms": list(query_terms),
     }

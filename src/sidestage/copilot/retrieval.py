@@ -23,6 +23,13 @@ from sidestage.fixtures.loader import SellerCatalog
 from sidestage.storage.database import MarketplaceDatabase
 from sidestage.storage.repositories import _evidence_id
 from sidestage.copilot.routing import explicit_product_matches
+from sidestage.copilot.variants import (
+    TrustedVariantCandidate,
+    VariantResolution,
+    VariantResolutionStatus,
+    parse_trusted_variant,
+    resolve_variant_question,
+)
 
 
 class RetrievalStatus(str, Enum):
@@ -36,6 +43,7 @@ class RetrievalFailureCode(str, Enum):
     STALE_EVIDENCE = "stale_evidence"
     WRONG_SKU = "wrong_sku"
     UNSUPPORTED_ANALYSIS = "unsupported_analysis"
+    AMBIGUOUS = "ambiguous"
 
 
 class RetrievalContract(BaseModel):
@@ -58,6 +66,7 @@ class RetrievalContext(RetrievalContract):
     show_id: str
     bound_listing: BoundListing
     observed_at: datetime
+    question: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=240)]
 
     @field_validator("observed_at")
     @classmethod
@@ -74,6 +83,7 @@ class TemplateRetrievalContext(RetrievalContract):
     show_id: str
     bound_listing: BoundListing
     observed_at: datetime
+    question: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=240)]
 
     @field_validator("observed_at")
     @classmethod
@@ -174,17 +184,24 @@ class EvidenceRetriever:
                 return identity_result
             records.append(identity_result)
 
+            availability_added = False
             for fact_type in request.required_fact_types:
                 if fact_type is FactType.LISTING_IDENTITY:
                     continue
                 if fact_type is FactType.CURRENT_PRICE:
                     records.append(self._price_record(context, listing))
                     continue
-                if fact_type is FactType.VARIANT_AVAILABILITY:
-                    stock_result = self._stock_record(connection, context, request)
+                if fact_type in {
+                    FactType.VARIANT_AVAILABILITY,
+                    FactType.AVAILABILITY_SUMMARY,
+                }:
+                    if availability_added:
+                        continue
+                    stock_result = self._availability_record(connection, context)
                     if isinstance(stock_result, RetrievalResult):
                         return stock_result
                     records.append(stock_result)
+                    availability_added = True
                     continue
                 if fact_type in _POLICY_FACTS:
                     stored = self._one_record(self._stored_rows(connection, context, fact_type))
@@ -221,7 +238,7 @@ class EvidenceRetriever:
         self,
         context: TemplateRetrievalContext,
     ) -> RetrievalResult:
-        """Load Workflow 1's complete bounded candidate set in one read boundary."""
+        """Load bounded candidates after application-owned variant resolution."""
 
         with self.database.read() as connection:
             listing = connection.execute(
@@ -230,7 +247,7 @@ class EvidenceRetriever:
                 (context.seller_id, context.bound_listing.listing_id),
             ).fetchone()
             show = connection.execute(
-                "SELECT seller_id FROM shows WHERE seller_id = ? AND show_id = ?",
+                "SELECT seller_id, show_seq FROM shows WHERE seller_id = ? AND show_id = ?",
                 (context.seller_id, context.show_id),
             ).fetchone()
             if listing is None or show is None:
@@ -246,10 +263,26 @@ class EvidenceRetriever:
                 return identity
             records: list[EvidenceRecord] = [identity, self._price_record(context, listing)]
 
-            stock = self._all_stock_records(connection, context)
-            if isinstance(stock, RetrievalResult):
-                return stock
-            records.extend(stock)
+            resolution = self._variant_resolution(context)
+            if resolution.status is VariantResolutionStatus.EXACT:
+                stock = self._exact_stock_record(connection, context, resolution.candidate)
+                if isinstance(stock, RetrievalResult):
+                    return stock
+                records.append(stock)
+            elif resolution.status is VariantResolutionStatus.SUMMARY:
+                summary = self._availability_summary_record(
+                    connection,
+                    context,
+                    show_seq=int(show["show_seq"]),
+                )
+                if isinstance(summary, RetrievalResult):
+                    return summary
+                records.append(summary)
+            elif resolution.status in {
+                VariantResolutionStatus.AMBIGUOUS,
+                VariantResolutionStatus.MISSING_EVIDENCE,
+            }:
+                return self._resolution_failure(resolution)
 
             for fact_type in sorted((*_POLICY_FACTS, *_RESEARCH_FACTS), key=lambda item: item.value):
                 rows = self._stored_rows(connection, context, fact_type)
@@ -314,6 +347,26 @@ class EvidenceRetriever:
                         return self._failure(
                             RetrievalFailureCode.STALE_EVIDENCE,
                             "inventory version changed after retrieval",
+                        )
+                if record.fact_type is FactType.AVAILABILITY_SUMMARY:
+                    show = connection.execute(
+                        "SELECT show_seq FROM shows WHERE seller_id = ? AND show_id = ?",
+                        (snapshot.seller_id, snapshot.show_id),
+                    ).fetchone()
+                    if show is None or int(show["show_seq"]) != record.source_version:
+                        return self._failure(
+                            RetrievalFailureCode.STALE_EVIDENCE,
+                            "show state changed after availability summary retrieval",
+                        )
+                    expected = self._availability_summary_value(
+                        connection,
+                        seller_id=snapshot.seller_id,
+                        listing_id=snapshot.listing_id,
+                    )
+                    if isinstance(expected, RetrievalResult) or expected != record.value:
+                        return self._failure(
+                            RetrievalFailureCode.STALE_EVIDENCE,
+                            "availability summary changed after retrieval",
                         )
         return RetrievalResult(status=RetrievalStatus.SUCCEEDED, snapshot=snapshot)
 
@@ -436,33 +489,46 @@ class EvidenceRetriever:
             provenance="synthetic_seller_data",
         )
 
-    def _stock_record(
+    def _availability_record(
         self,
         connection,
         context: RetrievalContext,
-        request: EvidenceRequest,
     ) -> EvidenceRecord | RetrievalResult:
-        product = next(
-            product
-            for product in self.catalog.seller(context.seller_id).products
-            if product.listing.listing_id == context.bound_listing.listing_id
-        )
-        requested_labels = {label.casefold() for label in request.variant_mentions}
-        matches = [
-            variant
-            for variant in product.variants
-            if variant.label.casefold() in requested_labels
-        ]
-        if len(matches) != 1:
+        resolution = self._variant_resolution(context)
+        if resolution.status is VariantResolutionStatus.EXACT:
+            return self._exact_stock_record(connection, context, resolution.candidate)
+        if resolution.status is VariantResolutionStatus.SUMMARY:
+            show = connection.execute(
+                "SELECT show_seq FROM shows WHERE seller_id = ? AND show_id = ?",
+                (context.seller_id, context.show_id),
+            ).fetchone()
+            if show is None:
+                return self._failure(
+                    RetrievalFailureCode.WRONG_SKU,
+                    "show is not in the trusted tenant scope",
+                )
+            return self._availability_summary_record(
+                connection,
+                context,
+                show_seq=int(show["show_seq"]),
+            )
+        return self._resolution_failure(resolution)
+
+    def _exact_stock_record(
+        self,
+        connection,
+        context: Union[RetrievalContext, TemplateRetrievalContext],
+        candidate: Optional[TrustedVariantCandidate],
+    ) -> EvidenceRecord | RetrievalResult:
+        if candidate is None:
             return self._failure(
                 RetrievalFailureCode.MISSING_EVIDENCE,
-                "exact requested variant is missing or ambiguous",
+                "resolved variant candidate is absent",
             )
-        variant = matches[0]
         row = connection.execute(
             """SELECT available_quantity, version FROM inventory
                WHERE seller_id = ? AND listing_id = ? AND variant_id = ?""",
-            (context.seller_id, context.bound_listing.listing_id, variant.variant_id),
+            (context.seller_id, context.bound_listing.listing_id, candidate.variant_id),
         ).fetchone()
         if row is None:
             return self._failure(
@@ -473,33 +539,77 @@ class EvidenceRetriever:
             evidence_id=_evidence_id(
                 context.seller_id,
                 context.bound_listing.listing_id,
-                f"variant_availability:{variant.variant_id}",
+                f"variant_availability:{candidate.variant_id}",
             ),
             seller_id=context.seller_id,
             listing_id=context.bound_listing.listing_id,
             fact_type=FactType.VARIANT_AVAILABILITY,
-            value=f"{variant.label}: {int(row['available_quantity'])} available",
+            value=f"{candidate.label}: {int(row['available_quantity'])} available",
             source=EvidenceSource.MARKETPLACE_STATE,
-            source_ref=f"sqlite:inventory/{variant.variant_id}",
+            source_ref=f"sqlite:inventory/{candidate.variant_id}",
             source_version=int(row["version"]),
             observed_at=context.observed_at,
             provenance="synthetic_seller_data",
         )
 
-    def _all_stock_records(
+    def _availability_summary_record(
         self,
         connection,
-        context: TemplateRetrievalContext,
-    ) -> list[EvidenceRecord] | RetrievalResult:
-        product = next(
-            product
-            for product in self.catalog.seller(context.seller_id).products
-            if product.listing.listing_id == context.bound_listing.listing_id
+        context: Union[RetrievalContext, TemplateRetrievalContext],
+        *,
+        show_seq: int,
+    ) -> EvidenceRecord | RetrievalResult:
+        value = self._availability_summary_value(
+            connection,
+            seller_id=context.seller_id,
+            listing_id=context.bound_listing.listing_id,
         )
+        if isinstance(value, RetrievalResult):
+            return value
+        return EvidenceRecord(
+            evidence_id=_evidence_id(
+                context.seller_id,
+                context.bound_listing.listing_id,
+                "availability_summary",
+            ),
+            seller_id=context.seller_id,
+            listing_id=context.bound_listing.listing_id,
+            fact_type=FactType.AVAILABILITY_SUMMARY,
+            value=value,
+            source=EvidenceSource.MARKETPLACE_STATE,
+            source_ref=(
+                f"sqlite:shows/{context.show_id}/inventory_summary/"
+                f"{context.bound_listing.listing_id}"
+            ),
+            source_version=show_seq,
+            observed_at=context.observed_at,
+            provenance="synthetic_seller_data",
+        )
+
+    def _availability_summary_value(
+        self,
+        connection,
+        *,
+        seller_id: str,
+        listing_id: str,
+    ) -> str | RetrievalResult:
+        product = next(
+            (
+                product
+                for product in self.catalog.seller(seller_id).products
+                if product.listing.listing_id == listing_id
+            ),
+            None,
+        )
+        if product is None:
+            return self._failure(
+                RetrievalFailureCode.WRONG_SKU,
+                "bound listing is absent from the trusted seller catalog",
+            )
         rows = connection.execute(
             """SELECT variant_id, available_quantity, version FROM inventory
                WHERE seller_id = ? AND listing_id = ? ORDER BY variant_id""",
-            (context.seller_id, context.bound_listing.listing_id),
+            (seller_id, listing_id),
         ).fetchall()
         by_variant = {row["variant_id"]: row for row in rows}
         if set(by_variant) != {variant.variant_id for variant in product.variants}:
@@ -507,28 +617,49 @@ class EvidenceRetriever:
                 RetrievalFailureCode.MISSING_EVIDENCE,
                 "current variant inventory is incomplete for the bound listing",
             )
-        records = []
-        for variant in sorted(product.variants, key=lambda item: item.variant_id):
-            row = by_variant[variant.variant_id]
-            records.append(
-                EvidenceRecord(
-                    evidence_id=_evidence_id(
-                        context.seller_id,
-                        context.bound_listing.listing_id,
-                        f"variant_availability:{variant.variant_id}",
-                    ),
-                    seller_id=context.seller_id,
-                    listing_id=context.bound_listing.listing_id,
-                    fact_type=FactType.VARIANT_AVAILABILITY,
-                    value=f"{variant.label}: {int(row['available_quantity'])} available",
-                    source=EvidenceSource.MARKETPLACE_STATE,
-                    source_ref=f"sqlite:inventory/{variant.variant_id}",
-                    source_version=int(row["version"]),
-                    observed_at=context.observed_at,
-                    provenance="synthetic_seller_data",
-                )
+        candidates = sorted(
+            self._trusted_candidates(product.variants),
+            key=lambda item: (item.size_system.value, item.audience.value, item.size),
+        )
+        available_labels = [
+            candidate.label
+            for candidate in candidates
+            if int(by_variant[candidate.variant_id]["available_quantity"]) > 0
+        ]
+        total = sum(int(row["available_quantity"]) for row in rows)
+        labels = ", ".join(available_labels) if available_labels else "none"
+        return f"Available sizes: {labels}; Total available: {total} pairs"
+
+    def _variant_resolution(
+        self,
+        context: Union[RetrievalContext, TemplateRetrievalContext],
+    ) -> VariantResolution:
+        product = next(
+            (
+                product
+                for product in self.catalog.seller(context.seller_id).products
+                if product.listing.listing_id == context.bound_listing.listing_id
+            ),
+            None,
+        )
+        if product is None:
+            return VariantResolution(status=VariantResolutionStatus.MISSING_EVIDENCE)
+        return resolve_variant_question(context.question, product.variants)
+
+    @staticmethod
+    def _trusted_candidates(variants) -> tuple[TrustedVariantCandidate, ...]:
+        return tuple(parse_trusted_variant(variant) for variant in variants)
+
+    def _resolution_failure(self, resolution: VariantResolution) -> RetrievalResult:
+        if resolution.status is VariantResolutionStatus.AMBIGUOUS:
+            return self._failure(
+                RetrievalFailureCode.AMBIGUOUS,
+                "variant wording matches multiple trusted candidates",
             )
-        return records
+        return self._failure(
+            RetrievalFailureCode.MISSING_EVIDENCE,
+            "variant wording matches no trusted candidate",
+        )
 
     @staticmethod
     def _failure(code: RetrievalFailureCode, message: str) -> RetrievalResult:

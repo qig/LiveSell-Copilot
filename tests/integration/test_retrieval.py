@@ -26,7 +26,12 @@ from sidestage.domain.replies import (
 )
 from sidestage.fixtures.loader import load_seller_fixture
 from sidestage.marketplace.authority import SellerAuthority
-from sidestage.marketplace.service import MarketplaceService, PriceMarkdownRequest, PushRequest
+from sidestage.marketplace.service import (
+    InventoryChangeRequest,
+    MarketplaceService,
+    PriceMarkdownRequest,
+    PushRequest,
+)
 from sidestage.storage.database import MarketplaceDatabase
 
 
@@ -68,11 +73,12 @@ def retrieval_runtime(tmp_path: Path):
             binding_status=BindingStatus.CERTAIN,
         ),
         observed_at=NOW,
+        question="What is the current price?",
     )
     return database, marketplace, authority, EvidenceRetriever(database, catalog), context
 
 
-def _request(*facts: FactType, variants: tuple[str, ...] = (), queries: tuple[str, ...] = ()):
+def _request(*facts: FactType, queries: tuple[str, ...] = ()):
     return EvidenceRequest(
         intent=AnalysisIntent.ANSWERABLE,
         answer_category=(
@@ -94,22 +100,24 @@ def _request(*facts: FactType, variants: tuple[str, ...] = (), queries: tuple[st
             else AnswerCategory.PRICE
         ),
         product_mentions=("Aero Dash",),
-        variant_mentions=variants,
         required_fact_types=facts,
         query_terms=queries,
     )
+
+
+def _with_question(context: RetrievalContext, question: str) -> RetrievalContext:
+    return context.model_copy(update={"question": question})
 
 
 def test_retrieval_builds_one_fresh_tenant_scoped_sourced_snapshot(retrieval_runtime) -> None:
     _database, _marketplace, _authority, retriever, context = retrieval_runtime
 
     result = retriever.retrieve(
-        context,
+        _with_question(context, "Do you have 9 for man?"),
         _request(
             FactType.CURRENT_PRICE,
             FactType.VARIANT_AVAILABILITY,
             FactType.SHIPPING_POLICY,
-            variants=("US M 9",),
         ),
     )
 
@@ -151,7 +159,7 @@ def test_retrieval_builds_one_fresh_tenant_scoped_sourced_snapshot(retrieval_run
     assert policy.source is EvidenceSource.SELLER_POLICY
 
 
-def test_template_bundle_is_complete_bounded_and_deterministically_sorted(
+def test_template_bundle_exact_query_contains_only_python_resolved_variant(
     retrieval_runtime,
 ) -> None:
     _database, _marketplace, _authority, retriever, context = retrieval_runtime
@@ -162,6 +170,7 @@ def test_template_bundle_is_complete_bounded_and_deterministically_sorted(
         show_id=context.show_id,
         bound_listing=context.bound_listing,
         observed_at=context.observed_at,
+        question="Is 9 M US available?",
     )
 
     first = retriever.retrieve_template_bundle(template_context)
@@ -192,14 +201,56 @@ def test_template_bundle_is_complete_bounded_and_deterministically_sorted(
         FactType.AUTHENTICITY,
         FactType.CONDITION,
     }.issubset({record.fact_type for record in records})
-    product = next(
-        product
-        for product in retriever.catalog.seller(SELLER).products
-        if product.listing.listing_id == LISTING
+    stock = [record for record in records if record.fact_type is FactType.VARIANT_AVAILABILITY]
+    assert len(stock) == 1
+    assert stock[0].source_ref.endswith("/var_velocity_aero_dash_9")
+    assert stock[0].value == "US M 9: 2 available"
+    projected_stock = [
+        record
+        for record in first.snapshot.records
+        if record.template_projection()["fact_type"] == FactType.VARIANT_AVAILABILITY.value
+    ]
+    assert len(projected_stock) == 1
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_fragment"),
+    (
+        ("What sizes are available?", "Available sizes: US M 8, US M 9, US M 10"),
+        ("How many pairs are left across all sizes?", "Total available: 7"),
+    ),
+)
+def test_general_availability_uses_one_application_owned_summary_record(
+    retrieval_runtime,
+    question: str,
+    expected_fragment: str,
+) -> None:
+    _database, _marketplace, _authority, retriever, context = retrieval_runtime
+    result = retriever.retrieve_template_bundle(
+        TemplateRetrievalContext(
+            question_id=context.question_id,
+            trace_id=context.trace_id,
+            seller_id=context.seller_id,
+            show_id=context.show_id,
+            bound_listing=context.bound_listing,
+            observed_at=context.observed_at,
+            question=question,
+        )
     )
-    assert sum(
-        record.fact_type is FactType.VARIANT_AVAILABILITY for record in records
-    ) == len(product.variants)
+
+    assert result.status is RetrievalStatus.SUCCEEDED
+    assert result.snapshot is not None
+    summaries = [
+        record
+        for record in result.snapshot.records
+        if record.fact_type is FactType.AVAILABILITY_SUMMARY
+    ]
+    assert len(summaries) == 1
+    assert expected_fragment in summaries[0].value
+    assert not any(
+        record.fact_type is FactType.VARIANT_AVAILABILITY
+        for record in result.snapshot.records
+    )
 
 
 def test_product_research_uses_tenant_filtered_fts_and_preserves_provenance(
@@ -279,10 +330,9 @@ def test_wrong_sku_missing_variant_and_conflicting_evidence_are_typed(
     assert wrong_name_result.failure.code is RetrievalFailureCode.WRONG_SKU
 
     missing_result = retriever.retrieve(
-        context,
+        _with_question(context, "Do you have US M size 99?"),
         _request(
             FactType.VARIANT_AVAILABILITY,
-            variants=("US M 99",),
         ),
     )
     assert missing_result.failure is not None
@@ -340,6 +390,40 @@ def test_version_revalidation_detects_stale_mutable_evidence(retrieval_runtime) 
             expected_listing_version=1,
         ),
         idempotency_key="markdown-aero",
+    )
+    freshness = retriever.revalidate(result.snapshot)
+
+    assert freshness.status is RetrievalStatus.FAILED
+    assert freshness.failure is not None
+    assert freshness.failure.code is RetrievalFailureCode.STALE_EVIDENCE
+
+
+def test_aggregate_availability_revalidation_detects_any_inventory_change(
+    retrieval_runtime,
+) -> None:
+    _database, marketplace, authority, retriever, context = retrieval_runtime
+    result = retriever.retrieve_template_bundle(
+        TemplateRetrievalContext(
+            question_id=context.question_id,
+            trace_id=context.trace_id,
+            seller_id=context.seller_id,
+            show_id=context.show_id,
+            bound_listing=context.bound_listing,
+            observed_at=context.observed_at,
+            question="What sizes are available?",
+        )
+    )
+    assert result.snapshot is not None
+
+    marketplace.inventory_change(
+        authority,
+        InventoryChangeRequest(
+            listing_id=LISTING,
+            variant_id="var_velocity_aero_dash_8",
+            new_available_quantity=0,
+            expected_inventory_version=1,
+        ),
+        idempotency_key="stock-aero-8-zero",
     )
     freshness = retriever.revalidate(result.snapshot)
 

@@ -111,12 +111,12 @@ def test_sixty_fifth_candidate_is_seller_visible_without_starting_any_model_call
                 for index in range(64)
             ]
             for _ in range(500):
-                if app.state.work_scheduler.accepted_count == 64 and runner.active == 4:
+                if app.state.work_scheduler.accepted_count == 64 and runner.active == 5:
                     break
                 await asyncio.sleep(0.001)
             assert app.state.work_scheduler.accepted_count == 64
             assert len(runner.calls) == 0
-            assert runner.active == 4
+            assert runner.active == 5
 
             rejected = await process_customer_reply(
                 _raw_question(authority, 64),
@@ -125,14 +125,14 @@ def test_sixty_fifth_candidate_is_seller_visible_without_starting_any_model_call
             assert rejected.reason_code == "capacity_exceeded"
             assert rejected.publication["state"] == "needs_seller"
             assert rejected.latency.boundary == "r2_inbox_sse"
-            assert runner.active == 4
+            assert runner.active == 5
             assert len(runner.calls) == 0
 
             runner.release.set()
             results = await asyncio.gather(*tasks)
             assert all(result.publication["state"] == "awaiting_review" for result in results)
             assert len(runner.calls) == 128
-            assert app.state.work_scheduler.max_show_active[authority.show_id] == 4
+            assert app.state.work_scheduler.max_show_active[authority.show_id] == 5
             assert app.state.work_scheduler.capacity_rejection_count == 1
             with app.state.database.read() as connection:
                 assert connection.execute("SELECT COUNT(*) FROM chat_events").fetchone()[0] == 65
@@ -142,7 +142,7 @@ def test_sixty_fifth_candidate_is_seller_visible_without_starting_any_model_call
     asyncio.run(exercise())
 
 
-def test_three_sellers_are_capped_at_four_each_and_twelve_globally(
+def test_three_sellers_are_capped_at_five_each_and_fifteen_globally(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
@@ -171,14 +171,19 @@ def test_three_sellers_are_capped_at_four_each_and_twelve_globally(
                 for ordinal in range(5)
             ]
             for _ in range(500):
-                if runner.active == 12:
+                if (
+                    app.state.work_scheduler.max_global_active == 15
+                    and runner.active == 12
+                ):
                     break
                 await asyncio.sleep(0.001)
+            # The outer livesell scheduler admits 15; the baseline analysis
+            # profile retains its independent 12-call core lane.
             assert runner.active == 12
             snapshot = app.state.work_scheduler.snapshot()
-            assert snapshot["max_global_active"] == 12
+            assert snapshot["max_global_active"] == 15
             assert snapshot["max_show_active"] == {
-                authority.show_id: 4 for authority in authorities
+                authority.show_id: 5 for authority in authorities
             }
             runner.release.set()
             await asyncio.gather(*tasks)
@@ -317,8 +322,8 @@ def test_scripted_pressure_replays_three_exact_workloads_with_full_accounting() 
     assert report["control_event_count"] == 3
     assert all(not item["chat_denominator"] for item in report["control_events"])
     assert set(report["invariants"].values()) == {0}
-    assert report["scheduler"]["max_global_active"] == 12
-    assert set(report["scheduler"]["max_show_active"].values()) == {4}
+    assert report["scheduler"]["max_global_active"] == 15
+    assert set(report["scheduler"]["max_show_active"].values()) == {5}
     assert report["latency"]["total_ms"]["count"] == 360
     assert report["latency"]["reported_denominator"] == "all_events"
     assert report["latency"]["release_slo_denominator"] == "answerable_parent"
@@ -367,7 +372,9 @@ def test_one_call_pressure_uses_one_request_per_admitted_parent_and_same_safety_
     )
 
     assert report["workflow_strategy"] == "one_call_template"
-    assert report["model_request_count"] == 135
+    # Static v1 scope gates remove every obvious non-answerable event. The model
+    # sees exactly the 72 answerable parents in this fixed workload.
+    assert report["model_request_count"] == 72
     assert set(report["invariants"].values()) == {0}
     assert report["scorecard"]["answerable_supported_suggestions"] == {
         "total": 72,
@@ -382,5 +389,5 @@ def test_one_call_pressure_uses_one_request_per_admitted_parent_and_same_safety_
         "passed": 72,
         "rate": 1.0,
     }
-    assert report["latency"]["denominators"]["model_backed"]["total_ms"]["count"] == 135
+    assert report["latency"]["denominators"]["model_backed"]["total_ms"]["count"] == 72
     assert report["passed"] is True

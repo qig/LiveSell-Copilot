@@ -35,7 +35,11 @@ def _record(fact_type: FactType, value: str, *, suffix: str | None = None) -> Ev
     resolved_suffix = suffix or fact_type.value
     source = (
         EvidenceSource.MARKETPLACE_STATE
-        if fact_type in {FactType.CURRENT_PRICE, FactType.VARIANT_AVAILABILITY}
+        if fact_type in {
+            FactType.CURRENT_PRICE,
+            FactType.VARIANT_AVAILABILITY,
+            FactType.AVAILABILITY_SUMMARY,
+        }
         else EvidenceSource.SELLER_POLICY
         if fact_type in {
             FactType.SHIPPING_POLICY,
@@ -130,35 +134,42 @@ def test_single_fact_templates_render_only_trusted_evidence(
     assert rendered.intent.claims[0].evidence_ids == (f"evd_{fact_type.value}",)
 
 
-def test_exact_variant_and_availability_summary_use_only_selected_snapshot_records() -> None:
+def test_exact_variant_and_aggregate_availability_summary_render_selected_records() -> None:
     size_9 = _record(FactType.VARIANT_AVAILABILITY, "US M 9: 2 available", suffix="stock_var_9")
-    size_10 = _record(FactType.VARIANT_AVAILABILITY, "US M 10: 0 available", suffix="stock_var_10")
-    task = _task(_record(FactType.LISTING_IDENTITY, "Aero Dash"), size_9, size_10)
+    exact_task = _task(_record(FactType.LISTING_IDENTITY, "Aero Dash"), size_9)
+    summary_record = _record(
+        FactType.AVAILABILITY_SUMMARY,
+        "Available sizes: US M 8, US M 9; Total available: 6 pairs",
+    )
+    summary_task = _task(_record(FactType.LISTING_IDENTITY, "Aero Dash"), summary_record)
 
     exact = render_approved_template(
         TemplateSelectionIntent(
             template_id=ReplyTemplateId.EXACT_VARIANT_AVAILABILITY,
             evidence_ids=("evd_stock_var_9",),
-            variant_id="var_9",
         ),
-        task,
+        exact_task,
     )
     summary = render_approved_template(
         TemplateSelectionIntent(
             template_id=ReplyTemplateId.AVAILABILITY_SUMMARY,
-            evidence_ids=("evd_stock_var_9", "evd_stock_var_10"),
+            evidence_ids=("evd_availability_summary",),
         ),
-        task,
+        summary_task,
     )
 
     assert exact.intent.reply_text == "Availability: US M 9: 2 available"
     assert exact.intent.claims[0].evidence_ids == ("evd_stock_var_9",)
-    assert "US M 9: 2 available" in summary.intent.reply_text
-    assert "US M 10: 0 available" in summary.intent.reply_text
-    assert tuple(claim.evidence_ids[0] for claim in summary.intent.claims) == (
-        "evd_stock_var_9",
-        "evd_stock_var_10",
+    assert summary.intent.reply_text == (
+        "Availability: Available sizes: US M 8, US M 9; Total available: 6 pairs"
     )
+    assert summary.intent.claims[0].evidence_ids == ("evd_availability_summary",)
+    projected_variant_records = [
+        record
+        for record in exact_task.model_projection()["evidence"]
+        if record["fact_type"] == FactType.VARIANT_AVAILABILITY.value
+    ]
+    assert projected_variant_records == [size_9.template_projection()]
 
 
 def test_listing_identity_records_the_requested_field_without_inventing_a_value() -> None:
@@ -180,22 +191,35 @@ def test_listing_identity_records_the_requested_field_without_inventing_a_value(
     assert rendered.intent.claims[0].evidence_ids == ("evd_listing_identity",)
 
 
-def test_template_selection_rejects_irrelevant_arguments_and_fabricated_variant() -> None:
-    with pytest.raises(ValueError, match="variant_id"):
+def test_template_selection_rejects_irrelevant_arguments_and_wrong_variant_evidence() -> None:
+    with pytest.raises(ValueError, match="extra_forbidden"):
         TemplateSelectionIntent(
             template_id=ReplyTemplateId.CURRENT_PRICE,
             evidence_ids=("evd_current_price",),
-            variant_id="var_9",
+            variant_id="var_9",  # type: ignore[call-arg]
         )
 
-    with pytest.raises(TemplateRenderError, match="variant"):
+    with pytest.raises(TemplateRenderError, match="variant_availability"):
         render_approved_template(
             TemplateSelectionIntent(
                 template_id=ReplyTemplateId.EXACT_VARIANT_AVAILABILITY,
-                evidence_ids=("evd_stock_var_9",),
-                variant_id="var_fabricated",
+                evidence_ids=("evd_current_price",),
             ),
-            _task(_record(FactType.VARIANT_AVAILABILITY, "US M 9: 2 available", suffix="stock_var_9")),
+            _task(_record(FactType.CURRENT_PRICE, "USD 160.00")),
+        )
+
+    resolved_size_9 = _record(
+        FactType.VARIANT_AVAILABILITY,
+        "US M 9: 2 available",
+        suffix="stock_var_9",
+    )
+    with pytest.raises(TemplateRenderError, match="absent from the trusted snapshot"):
+        render_approved_template(
+            TemplateSelectionIntent(
+                template_id=ReplyTemplateId.EXACT_VARIANT_AVAILABILITY,
+                evidence_ids=("evd_stock_var_10",),
+            ),
+            _task(resolved_size_9),
         )
 
 

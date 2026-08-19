@@ -135,8 +135,8 @@ def test_livesell_profile_registers_exactly_two_terminal_tools_and_no_effect_too
         "request_reply_send",
         "abstain",
     ]
-    assert profile.queue_policy.capacity == 12
-    assert profile.queue_policy.max_concurrency == 12
+    assert profile.queue_policy.capacity == 15
+    assert profile.queue_policy.max_concurrency == 15
     tool_names = {tool.name for tool in profile.terminal_tools}
     for forbidden_tool in (
         "lookup_catalog",
@@ -179,12 +179,55 @@ def test_registered_handle_runs_the_public_m3a_core_and_decodes_typed_intent() -
     assert handle.registered_profile.digest == result.profile_digest
     assert handle.registered_profile.profile.adapter_id == result.adapter_id
     assert handle.per_show_capacity == 64
-    assert handle.per_show_concurrency == 4
-    assert handle.global_concurrency == 12
+    assert handle.per_show_concurrency == 5
+    assert handle.global_concurrency == 15
     provider_input = runner.calls[0].request.model_input.to_dict()
     assert "seller_id" not in provider_input
     assert "show_id" not in provider_input
     assert provider_input["question"]["question_id"] == "qst_profile_1"
+
+
+def test_template_projection_contains_semantic_fields_without_authority_metadata() -> None:
+    runner = ScriptedModelRunner(
+        [
+            ModelResponse(
+                model_id="scripted-template",
+                terminal_calls=(
+                    ModelTerminalCall(
+                        tool_name=ReplyTemplateId.CURRENT_PRICE.value,
+                        arguments_json=json.dumps(
+                            {"evidence_ids": ["evd_price_profile"]}
+                        ),
+                    ),
+                ),
+            )
+        ]
+    )
+    handle = register_livesell_template_agent(
+        runner,
+        model_config_ref="flash-lite-v1",
+        monotonic=lambda: 100.0,
+        core_id_factory=iter(("run_template_projection", "trace_unused")).__next__,
+    )
+
+    result = asyncio.run(handle.run(make_template_task()))
+
+    assert result.status is RunStatus.SUCCEEDED
+    model_input = runner.calls[0].request.model_input.to_dict()
+    assert model_input == {
+        "question": {"text": "How much is this pair?"},
+        "bound_listing": {
+            "listing_id": "lst_velocity_aero_dash",
+            "sku": "VK-AD-RC-001",
+        },
+        "evidence": [
+            {
+                "evidence_id": "evd_price_profile",
+                "fact_type": "current_price",
+                "value": "USD 160.00",
+            }
+        ],
+    }
 
 
 def test_livesell_profile_rejects_authority_inside_terminal_arguments() -> None:

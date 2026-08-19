@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable, Sequence
+from typing import Sequence
 
 from sidestage.copilot.contracts import EvidenceRecord, TemplateSelectionTask
 from sidestage.domain.replies import (
@@ -56,9 +56,7 @@ def render_approved_template(
         return _render(selection.template_id, task, category, f"{label}: {record.value}", (record,))
 
     if selection.template_id is ReplyTemplateId.EXACT_VARIANT_AVAILABILITY:
-        record = _variant_record(selected_records, selection.variant_id or "")
-        if len(selected_records) != 1:
-            raise TemplateRenderError("exact variant template requires exactly one evidence record")
+        record = _only_selected_fact(selected_records, FactType.VARIANT_AVAILABILITY)
         return _render(
             selection.template_id,
             task,
@@ -68,27 +66,14 @@ def render_approved_template(
         )
 
     if selection.template_id is ReplyTemplateId.AVAILABILITY_SUMMARY:
-        all_variant_records = tuple(
-            sorted(
-                _records(task.evidence_snapshot.records, FactType.VARIANT_AVAILABILITY),
-                key=lambda item: _natural_key(item.value),
-            )
-        )
-        selected_ids = {record.evidence_id for record in selected_records}
-        expected_ids = {record.evidence_id for record in all_variant_records}
-        if selected_ids != expected_ids:
-            raise TemplateRenderError("availability summary must select every trusted variant record")
-        records = all_variant_records
-        if not records:
-            raise TemplateRenderError("availability summary requires at least one variant")
-        reply_text = "Available variants: " + "; ".join(record.value for record in records)
+        record = _only_selected_fact(selected_records, FactType.AVAILABILITY_SUMMARY)
+        reply_text = f"Availability: {record.value}"
         return _render(
             selection.template_id,
             task,
             AnswerCategory.AVAILABILITY,
             reply_text,
-            records,
-            claim_values_only=True,
+            (record,),
         )
 
     if selection.template_id is ReplyTemplateId.LISTING_IDENTITY:
@@ -138,10 +123,6 @@ def _render(
     )
 
 
-def _records(records: Iterable[EvidenceRecord], fact_type: FactType) -> tuple[EvidenceRecord, ...]:
-    return tuple(record for record in records if record.fact_type is fact_type)
-
-
 def _selected_records(
     selection: TemplateSelectionIntent,
     task: TemplateSelectionTask,
@@ -161,18 +142,6 @@ def _only_selected_fact(
     return selected_records[0]
 
 
-def _variant_record(records: Iterable[EvidenceRecord], variant_id: str) -> EvidenceRecord:
-    matches = tuple(
-        record
-        for record in _records(records, FactType.VARIANT_AVAILABILITY)
-        if record.source_ref.endswith(f"/{variant_id}")
-        or record.evidence_id.endswith(f"_{variant_id}")
-    )
-    if len(matches) != 1:
-        raise TemplateRenderError("selected variant is absent or ambiguous in trusted evidence")
-    return matches[0]
-
-
 def _render_identity(value: str, field: ListingIdentityField | None) -> str:
     if field is ListingIdentityField.SKU:
         match = re.search(r"(?:^|;\s*)SKU\s+([^;]+)", value)
@@ -187,11 +156,3 @@ def _render_identity(value: str, field: ListingIdentityField | None) -> str:
     if field is ListingIdentityField.COLORWAY:
         return f"Product identity: {value}"
     raise TemplateRenderError("listing identity field is missing")
-
-
-def _natural_key(value: str) -> tuple[tuple[int, object], ...]:
-    return tuple(
-        (0, int(part)) if part.isdigit() else (1, part.casefold())
-        for part in re.split(r"(\d+)", value)
-        if part
-    )

@@ -41,7 +41,6 @@ class AdaptiveReplyRunner:
                                 "intent": "answerable",
                                 "answer_category": "price",
                                 "product_mentions": ["Aero Dash"],
-                                "variant_mentions": [],
                                 "required_fact_types": ["current_price"],
                                 "query_terms": [],
                             }

@@ -33,18 +33,47 @@ _DETERMINISTIC_NOISE_PHRASES = frozenset(
         "thank you",
         "good morning",
         "good evening",
-        "lets gooo",
+        "let s gooo",
         "clean pair",
         "that colorway is nice",
         "big w",
+        "what song is playing",
+        "nice backdrop",
+        "who won last night s game",
+        "i like your hat",
     }
 )
 _ADVERSARIAL_MARKERS = (
     "ignore previous instructions",
     "ignore all instructions",
+    "ignore seller policy",
+    "ignore the catalog",
+    "system override",
     "system prompt",
     "developer message",
+    "use a tool",
+    "pretend you",
+    "hidden inventory",
+    "answer as if",
     "send without approval",
+)
+_AMBIGUOUS_PATTERNS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"\b(?:my|usual|normal) size\b",
+        r"\b(?:that|the) one (?:i|we) (?:meant|wanted)\b",
+        r"\bare (?:those|these) better\b",
+        r"\b(?:the )?(?:other|another) pair\b",
+    )
+)
+_UNSUPPORTED_PATTERNS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"\b(?:my|the) (?:real )?order\b",
+        r"\b(?:reserve|hold|save) (?:this|it|these|them)\b",
+        r"\b(?:double|increase|go up) in value\b",
+        r"\bmatch (?:another|other|a different) seller(?: s)? price\b",
+    )
 )
 
 
@@ -301,6 +330,42 @@ class CopilotRouter:
                     should_process=False,
                 )
 
+            raw_text = event.raw_text.casefold()
+            if any(marker in raw_text for marker in _ADVERSARIAL_MARKERS):
+                state = (
+                    QuestionState.NEEDS_SELLER
+                    if "?" in event.raw_text
+                    else QuestionState.UNANSWERED
+                )
+                return self._finalize_decision(
+                    connection,
+                    normalized=normalized,
+                    route=ReplyRoute.ADVERSARIAL,
+                    state=state,
+                    reason_code="prompt_injection",
+                    should_process=False,
+                )
+
+            if any(pattern.search(normalized.normalized_text) for pattern in _AMBIGUOUS_PATTERNS):
+                return self._finalize_decision(
+                    connection,
+                    normalized=normalized,
+                    route=ReplyRoute.AMBIGUOUS_OR_UNSUPPORTED,
+                    state=QuestionState.NEEDS_SELLER,
+                    reason_code="ambiguous_question",
+                    should_process=False,
+                )
+
+            if any(pattern.search(normalized.normalized_text) for pattern in _UNSUPPORTED_PATTERNS):
+                return self._finalize_decision(
+                    connection,
+                    normalized=normalized,
+                    route=ReplyRoute.AMBIGUOUS_OR_UNSUPPORTED,
+                    state=QuestionState.NEEDS_SELLER,
+                    reason_code="unsupported_request",
+                    should_process=False,
+                )
+
             active_epoch = connection.execute(
                 """SELECT epoch_id FROM listing_epochs
                    WHERE seller_id = ? AND show_id = ? AND end_seq IS NULL""",
@@ -316,17 +381,12 @@ class CopilotRouter:
                     should_process=False,
                 )
 
-            route = (
-                ReplyRoute.ADVERSARIAL
-                if any(marker in event.raw_text.casefold() for marker in _ADVERSARIAL_MARKERS)
-                else ReplyRoute.ELIGIBLE
-            )
             return self._finalize_decision(
                 connection,
                 normalized=normalized,
-                route=route,
+                route=ReplyRoute.ELIGIBLE,
                 state=QuestionState.QUEUED,
-                reason_code="eligible_candidate" if route is ReplyRoute.ELIGIBLE else "adversarial_candidate",
+                reason_code="eligible_candidate",
                 should_process=True,
             )
 

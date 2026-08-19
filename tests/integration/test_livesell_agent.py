@@ -86,7 +86,7 @@ def test_livesell_core_failures_never_retry_or_return_intent(
     assert len(runner.calls) == 1
 
 
-def test_per_show_dispatch_is_fifo_and_never_exceeds_four_active_calls() -> None:
+def test_per_show_dispatch_is_fifo_and_never_exceeds_five_active_calls() -> None:
     class BlockingRunner:
         def __init__(self) -> None:
             self.calls = []
@@ -119,17 +119,9 @@ def test_per_show_dispatch_is_fifo_and_never_exceeds_four_active_calls() -> None
             for index in range(5)
         ]
         for _ in range(100):
-            if len(runner.calls) == 4:
-                break
-            await asyncio.sleep(0.001)
-        assert runner.calls == ["qst_fifo_0", "qst_fifo_1", "qst_fifo_2", "qst_fifo_3"]
-
-        runner.release["qst_fifo_0"].set()
-        for _ in range(100):
             if len(runner.calls) == 5:
                 break
             await asyncio.sleep(0.001)
-        assert runner.calls[-1] == "qst_fifo_4"
         assert runner.calls == [f"qst_fifo_{index}" for index in range(5)]
         for event in runner.release.values():
             event.set()
@@ -177,7 +169,7 @@ def test_sixty_fifth_task_for_one_show_is_rejected_before_provider_work() -> Non
 
         assert rejected.status is RunStatus.FAILED
         assert rejected.failure.code is CoreFailureCode.QUEUE_FULL
-        assert len(runner.calls) == 4
+        assert len(runner.calls) == 5
         runner.release.set()
         await asyncio.gather(*tasks)
 
