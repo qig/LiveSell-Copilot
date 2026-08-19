@@ -1,12 +1,14 @@
 # SideStage Technical Design Document
 
-> Status: `Accepted` — builder-approved v1 design; Milestone 2, deterministic M3B.1-M3B.4 behavior, and the original M3B.5 Optimization and Debug Session are `Verified`; latency/DBG-023 and the follow-up reset/UI, lifecycle, Auto-message, and SSE work are committed but await clean final verification, and the final live release gate is open
+> Status: `Accepted` — the local P0 runtime and deterministic safety contracts are `Verified` at code head `3fda622`; a Vercel path correction is `Implemented` in the working tree, while the credentialed live-model latency gate remains open and is not `Measured`
 >
 > Last updated: 2026-08-18
 >
 > Milestone 2 terminal implementation commit: `734d151`
 >
 > M3B runtime commit: `7d6c349`; replay/evaluation commit: `6ba208a`; optimization/DBG-023 commit: `12f3bab`
+>
+> Current deterministic P0 evidence: `uv run pytest -q` -> `376 passed, 5 deselected in 77.61s` at `3fda622`
 >
 > Final SideStage implementation commit: TBD
 >
@@ -24,7 +26,87 @@ All catalogs, policies, listings, inventories, chat events, and custom messages 
 
 This is the accepted design contract. Concrete implementation file maps, function names, commands, and measured results are added only after they exist.
 
+### P0 implementation audit
+
+The current code implements the original P0 UI/marketplace design and the later approved Copilot, debugger, reset, runtime-selection, and protected-reviewer extensions. The deterministic suite at `3fda622` verifies the following boundaries:
+
+| Technical contract | Implementation and deterministic evidence |
+| --- | --- |
+| Static seller/chat fixtures, typed import, fixed-seed generation, byte-stable replay, and runtime/oracle separation | `src/sidestage/fixtures/`, `fixtures/scenarios/`, and unit/integration fixture tests |
+| FastAPI + SQLite WAL marketplace, trusted tenant/show authority, active-listing epochs, exact five operations, receipts, idempotency, verification, and compensation | `src/sidestage/app.py`, `domain/`, `storage/`, `marketplace/`; marketplace/action/streaming tests |
+| Two-surface responsive seller UI, prepared/custom chat, latest valid Undo, Manual review, Auto-message, reply timeline, and developer Reset | `src/sidestage/web/static/`; 12 focused Playwright tests passed in 32.04s |
+| Deterministic routing and variant binding, tenant-first catalog/policy/FTS5 retrieval, two closed agent strategies, strict terminal validation, application rendering, brokered R2/R3 effects, and final freshness checks | `src/sidestage/copilot/`, `agent_core/`, and reply/routing/retrieval/R2/R3 tests |
+| Persisted eight-stage trace, evaluator-only oracle comparison, safety-race evaluation, pressure accounting, runtime selection, and SSE fan-out/reconnect | `src/sidestage/trace/`, `streaming/`, debugger UI, and trace/pressure/runtime/browser tests |
+| Complete protected reviewer boundary, fixed one-call release workflow, read-only debugger/runtime controls, disabled prepared burst, and atomic session/day quotas | Local `create_challenge_app()` behavior is verified through the `3fda622` full suite. A current uncommitted Vercel no-rewrite correction adds one regression; the focused file passes 9 tests in 0.55s but remains `Implemented`, not commit-bound `Verified`. |
+
+The default suite passed `376 passed, 5 deselected in 77.61s` before the later Vercel routing correction was introduced. The five deselected cases require real provider credentials and are intentionally outside deterministic P0 verification. Therefore the local code surface is `Verified`, but the live answerable-parent p95 below two seconds is still an open P0 release gate. The complete current working tree, including the uncommitted Vercel correction and Mock livesell capability, also passes `377 passed, 5 deselected in 77.28s`; this is regression evidence, not commit-bound `Verified` evidence. The Vercel-specific correction requires its own commit-bound rerun if that preview is used. Neither gap can be renamed P1 merely to make P0 appear complete.
+
+P1 begins after this release gate: a real R0 Shadow pilot mode with operator-timing instrumentation, execution of the three-seller pilot, and—only if hosted concurrency requires it—migration from process-local sessions/SQLite/SSE wakeups to shared durable infrastructure. External marketplace integration, open-web research, production commerce, and a general dynamic agent runtime remain out of scope for v1 rather than unfinished P0 work.
+
 ### Approved v1 runtime architecture
+
+```mermaid
+flowchart LR
+  subgraph Surfaces["Demo surfaces"]
+    Buyer["Prepared or custom buyer chat"]
+    Seller["Seller workspace<br/>review replies + five operations"]
+    Debugger["Developer debugger<br/>runtime selection + traces"]
+  end
+
+  subgraph Boundary["FastAPI HTTP/SSE boundary — optional challenge auth + quota"]
+    ChatAPI["Buyer-chat endpoints"]
+    SellerAPI["Seller reply/action endpoints"]
+    DebugAPI["Debugger endpoints"]
+    Projection["HTTP/SSE projections"]
+  end
+
+  subgraph Runtime["Single SideStage FastAPI/Uvicorn process"]
+    Ingest["EventIngestor<br/>trusted seller, show, time, and epoch"]
+    Route["Normalize, deduplicate,<br/>route, and bind listing"]
+    Select["Pinned workflow/model selection"]
+
+    subgraph ReplyPlane["Closed reply plane"]
+      TemplateEvidence["Application evidence plan<br/>+ tenant-scoped retrieval"]
+      TemplateAgent["EvidenceTemplateAgent<br/>select evidence + template"]
+      Planner["EvidencePlannerAgent<br/>typed retrieval request"]
+      DraftEvidence["Tenant-scoped retrieval"]
+      Drafter["ReplyDrafterAgent<br/>draft intent"]
+      Renderer["Application renderer"]
+      Broker["ReplyEffectBroker<br/>scope + evidence + freshness<br/>uniqueness + R3 authority"]
+      Outcome["Manual review, Auto-message,<br/>Needs seller, or no response"]
+    end
+
+    Marketplace["MarketplaceService<br/>Push · Swap · Unlist<br/>Markdown · Inventory Change"]
+    Trace["TraceRecorder<br/>eight stages + latency"]
+  end
+
+  Store[("SQLite WAL<br/>shows · epochs · events · questions<br/>replies · receipts · traces")]
+
+  Buyer --> ChatAPI --> Ingest --> Route --> Select
+  Select -->|one_call_template| TemplateEvidence --> TemplateAgent --> Renderer
+  Select -->|two_call_draft| Planner --> DraftEvidence --> Drafter --> Renderer
+  Renderer --> Broker --> Outcome --> Store
+
+  Seller --> SellerAPI
+  SellerAPI -->|accept, edit, or dismiss| Broker
+  SellerAPI --> Marketplace --> Store
+  Debugger --> DebugAPI
+  DebugAPI -. approved per-show selection .-> Select
+
+  Ingest --> Store
+  Route -. stage observations .-> Trace
+  TemplateAgent -. core events .-> Trace
+  Planner -. core events .-> Trace
+  Drafter -. core events .-> Trace
+  Broker -. verdicts .-> Trace
+  Marketplace -. operation observations .-> Trace
+  Trace --> Store
+
+  Store --> Projection --> Seller
+  Store --> Projection --> Debugger
+```
+
+The two model workflows are closed, startup-registered paths. Their outputs are untrusted intent data: neither model path can send a reply, choose tenant authority, query the database directly, or mutate marketplace state. `ReplyEffectBroker` is the only outbound-reply write boundary, and `MarketplaceService` is the only marketplace-operation write boundary. Solid arrows show commands or durable data flow; dotted arrows show bounded runtime selection and diagnostic observations.
 
 SideStage runs as one FastAPI/Uvicorn process with explicit `EventIngestor`, `MarketplaceService`, `MessageAnalyzer`, `EvidenceRetriever`, `StaticAgentCore`, `ReplyEffectBroker`, and `TraceRecorder` boundaries. A fixed application function, `process_customer_reply()`, calls those components in the approved order; it is not a reusable workflow abstraction. The agent core is an in-process Python component rather than a Node sidecar, subprocess agent, or external agent framework. FastAPI serves a static HTML/CSS/JavaScript interface. HTTP commands carry custom chat, seller operations, and reply decisions; Server-Sent Events publish live chat, Inbox state, inventory updates, and diagnostic traces. No frontend build system, message broker, Redis, vector database, workflow framework, or second backend service is required.
 
@@ -38,7 +120,7 @@ The credential-free `create_app()` factory remains available for deterministic t
 
 `create_challenge_app()` is the separate shared-reviewer boundary. Startup additionally requires `SIDESTAGE_DEMO_USERNAME` and `SIDESTAGE_DEMO_PASSWORD`; an ASGI middleware applies HTTP Basic authentication to static files, APIs, debugger routes, and SSE without buffering streaming bodies, leaving only `/healthz` public. It also adds no-store and browser-security headers. The challenge factory forces `one_call_template`, constructs one direct-OpenAI runner, refuses a non-OpenAI base URL, does not load the supplemental runtime catalog, disables runtime mutation and prepared bursts, and removes interactive OpenAPI routes. Before accepted custom or single prepared chat reaches the provider path, a SQLite transaction reserves units against hashed-session and global UTC-day limits. The ledger never stores the raw session token or credentials. Quota refusal returns typed HTTP 429 before any provider request.
 
-The Vercel `api/index.py` adapter points SQLite at `/tmp`. That makes the deployment importable on the Python runtime but does not change the accepted single-process architecture: function recycling can reset the database, separate instances do not share the in-memory session registry or SSE wakeups, and local SQLite is not a horizontally shared store. The Vercel URL is therefore an explicitly limited protected preview. A reliable final challenge URL runs one stateful ASGI instance with persistent SQLite. A durable all-Vercel revision would require a shared transactional database, durable session authority, and cross-instance notification service and is outside this hardening slice.
+The Vercel `api/index.py` adapter points SQLite at `/tmp`. Vercel's zero-configuration FastAPI runtime owns routing to this entrypoint; `vercel.json` must not catch-all rewrite requests to `/api/index`, because application authentication, APIs, static routes, and health checks require the original ASGI path. This makes the deployment importable on the Python runtime but does not change the accepted single-process architecture: function recycling can reset the database, separate instances do not share the in-memory session registry or SSE wakeups, and local SQLite is not a horizontally shared store. The Vercel URL is therefore an explicitly limited protected preview. A reliable final challenge URL runs one stateful ASGI instance with persistent SQLite. A durable all-Vercel revision would require a shared transactional database, durable session authority, and cross-instance notification service and is outside this hardening slice.
 
 ### Static agent-core boundary
 
@@ -455,9 +537,9 @@ Questions that exceed two seconds continue processing and count as SLO misses. R
 
 ## 13. Marketplace integration boundary
 
-The planned prototype will use an in-repository Whatnot-like emulator behind a typed marketplace port. No external marketplace API is required to run or test the submission.
+The implementation uses an in-repository Whatnot-like emulator behind a typed marketplace port. No external marketplace API is required to run or test the submission.
 
-The emulator must support:
+The emulator supports:
 
 - Isolated seller catalogs, listings, policies, and inventories.
 - Active-listing state and a complete per-show listing-epoch history.
@@ -472,12 +554,12 @@ The port must remain compatible with a future marketplace adapter that handles a
 
 ## 14. Seller UI event surfaces
 
-The planned technical-demo UI has two primary seller surfaces:
+The implemented technical-demo UI has two primary seller surfaces:
 
 - **Live Chat:** Renders chronological buffered mock events and accepts custom demo messages.
 - **Copilot Inbox:** Renders the reply with only its relevant current listing, inventory, and applicable policy facts; the Auto-message/Manual review control; and the five explicit seller marketplace actions. Open questions are ordered by `asked_at` plus monotonic `question_number` descending, partitioned in the browser into full-card **Now** (`age <= 20 seconds`) and compact collapsed **Earlier** (`age > 20 seconds`), and automatically repartitioned once per second without changing server state.
 
-A compact shared header carries seller, show, active-listing, latency-health, the plain-language reply mode, and a read-only active workflow/model badge. The UI never displays the internal R2/R3 labels; its toggle reads **Auto-message** or **Manual review**. Server-Sent Events update the UI; HTTP POST commands carry user decisions and emulator inputs. Every server snapshot carries the latest persisted stream offset. SQLite is the replay authority; the in-process hub uses a per-show event only as a wakeup hint and performs a second durable read after clearing it, closing the commit-to-wait race without sharing a condition lock across simultaneous or disconnecting browser listeners. An asynchronous SSE refresh may replace the browser projection only when its offset is at least the currently rendered offset, preventing an older in-flight read from overwriting a newer POST response such as a reply-mode or runtime-selection change. Only the latest rollback-eligible seller operation exposes Undo, and only while its expected resulting version remains current; complete compensation detail stays in the debugger. The diagnostic tracer is a separate developer route and must not add unrelated complexity to the seller workspace. It owns the authenticated per-show workflow/model selectors, disables incompatible combinations, shows selection version and cold/steady status, and supports routing-outcome filters for all, eligible, noise, duplicate, ambiguous or unsupported, and adversarial events. For generated fixtures it also shows evaluator-only expected route versus actual route; expected labels are never included in retrieval or model context.
+A compact shared header carries seller, show, active listing, the plain-language reply mode, and a read-only active workflow/model badge. Latency health remains in the developer debugger rather than the seller header, matching the approved minimal seller-card boundary. The UI never displays the internal R2/R3 labels; its toggle reads **Auto-message** or **Manual review**. Server-Sent Events update the UI; HTTP POST commands carry user decisions and emulator inputs. Every server snapshot carries the latest persisted stream offset. SQLite is the replay authority; the in-process hub uses a per-show event only as a wakeup hint and performs a second durable read after clearing it, closing the commit-to-wait race without sharing a condition lock across simultaneous or disconnecting browser listeners. An asynchronous SSE refresh may replace the browser projection only when its offset is at least the currently rendered offset, preventing an older in-flight read from overwriting a newer POST response such as a reply-mode or runtime-selection change. Only the latest rollback-eligible seller operation exposes Undo, and only while its expected resulting version remains current; complete compensation detail stays in the debugger. The diagnostic tracer is a separate developer route and must not add unrelated complexity to the seller workspace. It owns the authenticated per-show workflow/model selectors, disables incompatible combinations, shows selection version and cold/steady latency, and supports routing-outcome filters for all, eligible, noise, duplicate, ambiguous or unsupported, and adversarial events. For generated fixtures it also shows evaluator-only expected route versus actual route; expected labels are never included in retrieval or model context.
 
 Grounding and guardrail evaluation execute on the backend. Detailed evidence, provenance, freshness, evaluator verdicts, and stage payloads are written to the diagnostic trace. The seller UI receives only the minimal facts and lifecycle state required to supervise a reply; it does not render a confidence score or evaluator internals.
 
@@ -507,9 +589,9 @@ Valid transitions mirror the PRD state model. `unanswered` is terminal only afte
 
 The four may share correlation identifiers and a unified UI but have distinct durability and failure semantics.
 
-M2.debugger additionally exposes one bounded M2.1 import observation before the durable M3B trace store exists. The local review server runs the authoritative `load_seller_fixture()` path with a fail-open diagnostic observer and returns an ephemeral, sanitized four-stage trace: source read, typed contract validation, approved-seller validation, and tenant-index construction. The response includes only source filename/digest, stage state and duration, accepted entity counts, seller IDs, and typed reason codes. It excludes absolute paths, source JSON, validation input echoes, policies, facts, credentials, and stack traces. A diagnostic-observer failure cannot change the loader's result.
+M2.debugger additionally exposes one bounded M2.1 import observation alongside the durable M3B trace store. The FastAPI application runs the authoritative `load_seller_fixture()` path with a fail-open diagnostic observer and returns an ephemeral, sanitized four-stage trace: source read, typed contract validation, approved-seller validation, and tenant-index construction. The response includes only source filename/digest, stage state and duration, accepted entity counts, seller IDs, and typed reason codes. It excludes absolute paths, source JSON, validation input echoes, policies, facts, credentials, and stack traces. A diagnostic-observer failure cannot change the loader's result.
 
-This import observation is transport/runtime evidence for M2.1 only; it is not durable, does not establish marketplace authority, and does not upgrade the debugger's reply fixtures into runtime evidence. The dependency-free review server is a temporary same-origin transport. The planned FastAPI application may reuse the recorder and replace the HTTP transport without changing the debugger view contract.
+This import observation is transport/runtime evidence for M2.1 only; it is not durable, does not establish marketplace authority, and does not upgrade fixture labels into runtime evidence. `src/sidestage/web/server.py` remains a historical M2.0/M2.1 review utility; the authoritative current transport is the FastAPI endpoint in `src/sidestage/app.py`.
 
 The old M2 seven-stage presentation fixture is superseded and is no longer the debugger's default reply source. The current M3B debugger reads persisted eight-stage observations emitted around the actual `process_customer_reply()` component calls, preserves backend component and observation identifiers, and renders dependent stages as skipped after typed early exits. The browser neither maintains its own stage catalog nor infers success from component presence. Generic M3A results remain separately scoped and cannot make a livesell trace appear end-to-end green.
 
@@ -591,6 +673,10 @@ The OpenRouter comparison adds these benchmark-only requirements:
 The exact local run and full-suite commands are recorded in this document. No separate Milestone 2 closeout artifact is required for the challenge submission.
 
 ## 17. Code map and implementation status
+
+Current deterministic local P0 code head is `3fda622`. The exact command `uv run pytest -q` passed with `376 passed, 5 deselected in 77.61s`; the focused seller/debugger Playwright gate passed 12 tests in 32.04s. The five deselected tests are credential-gated live-provider cases, so this evidence verifies implementation and safety structure but does not measure the final live SLO. A subsequent uncommitted Vercel request-path correction makes the focused deployment file pass 9 tests in 0.55s and is tracked separately as `Implemented`.
+
+The protected reviewer extension adds `src/sidestage/deployment.py`, `src/sidestage/app.py::create_challenge_app`, `api/index.py`, `.vercelignore`, and `vercel.json`. Its tests cover fail-closed credentials, complete static/API/debugger/SSE authentication, one-call/read-only runtime constraints, single-message **Mock livesell** capability with disabled batch burst, atomic per-session/global quotas, pre-provider rejection, and Vercel import behavior. Mock livesell retains the browser's fixed 1.65-second cadence and submits only `count=1`; it deliberately does not wait for the prior workflow to finish because the registered Agent Core FIFO scheduler owns admission order, queue delay, backpressure, and latency traces. The working-tree correction removes the obsolete catch-all rewrite and tests that FastAPI receives its original request paths; see DBG-029. A Vercel function preview still has process/SQLite durability limits; the reliable accepted topology remains one persistent ASGI process.
 
 The committed Milestone 2 implementation terminates at `734d151` and has these concrete runtime files:
 
@@ -680,7 +766,7 @@ The committed M3B runtime (`7d6c349`) and replay/evaluation slice (`6ba208a`) ad
 - `src/sidestage/app.py::create_live_app`: fail-fast environment construction of the reviewer-facing shared live runner with sanitized runtime metadata and lifespan-owned shutdown cleanup; `tests/integration/test_live_app_factory.py` covers missing configuration, strict Luna mapping, key precedence, secret exclusion, and exactly-once trace/model cleanup without a network call, plus a separately marked live test of both model calls, the R2 card, and all eight debugger stages.
 - M3B unit, integration, and Playwright tests covering M3.1 routing/retrieval/trace ownership, M3.2 profile/broker/R2, M3.3 R3 races, and M3.4 generation/replay/debugger/safety behavior.
 
-Both concrete workflow implementations preserve the accepted M3.1-M3.4 compatibility map and are `Verified` for deterministic behavior through commit `39885e4`; the exact commit-bound command `uv run pytest -q` passed there with `300 passed, 5 deselected in 52.29s`. Focused integration tests prove that `one_call_template` registers and invokes only `EvidenceTemplateAgent`, while `two_call_draft` invokes separately registered `EvidencePlannerAgent` and `ReplyDrafterAgent`. Commit `12f3bab` contains the closed scope gates and DBG-023 resolver that make exactly 72 scripted provider requests for the 72 answerable parents and deterministically resolve buyer size wording before both workflows. Commit `b5823cc` adds the active-epoch/reset/timeline contracts. Commit `62a44ae` contains the lifespan, cross-interpreter scripted-pressure, Auto-message/routing, and SSE fan-out corrections: Auto-message is the default, the seller UI exposes only Auto-message and Manual review, unresolved cases remain seller-owned, and reconnecting same-show listeners no longer share condition-lock ownership. Its exact content passed pre-commit full suites with `368 passed, 5 deselected` on Python 3.9 and Python 3.13/FastAPI 0.141.1 (one deprecation warning on the latter). These commands were not rerun from the commit and are not promoted to final commit-bound verification; the earlier live artifact/manual Luna diagnostic is not promoted to final `Measured` evidence.
+Both concrete workflow implementations preserve the accepted M3.1-M3.4 compatibility map. Focused integration tests prove that `one_call_template` registers and invokes only `EvidenceTemplateAgent`, while `two_call_draft` invokes separately registered `EvidencePlannerAgent` and `ReplyDrafterAgent`. Commit `12f3bab` contains the closed scope gates and DBG-023 resolver that make exactly 72 scripted provider requests for the 72 answerable parents and deterministically resolve buyer size wording before both workflows. Commit `b5823cc` adds the active-epoch/reset/timeline contracts. Commit `62a44ae` contains the lifespan, cross-interpreter scripted-pressure, Auto-message/routing, and SSE fan-out corrections. Commit `3fda622` adds the protected challenge boundary. The exact current-tree full-suite rerun verifies all of this deterministic behavior together; earlier live artifacts and manual Luna diagnostics remain compatibility evidence, not final `Measured` evidence.
 
 For scripted livesell evaluation, the two-call cell proves semantic/accounting correctness and that its configured bounds are never exceeded; it does not infer saturation from an immediate fake provider. The release one-call cell additionally gives only the first 15 fake provider calls a bounded cooperative event-loop probe, with no wall-clock sleep, so five calls per show and fifteen globally are exercised consistently across supported Python scheduling behavior. This is synthetic capacity evidence only. Live latency and provider concurrency are measured only by the final real-model pressure command.
 
@@ -690,7 +776,7 @@ M3B.5 is `Verified` at `39885e4`; its commit-bound suite passed with `300 passed
 
 The builder accepted `one_call_template` as the release challenger and OpenRouter as the cross-model benchmark transport on 2026-08-18. The challenger, versioned template registry, closed workflow registration, deterministic evidence bundle, local renderer, broker entry point, OpenRouter fallback-disabled request configuration, sanitized provider accounting, and paired pressure strategy flag are committed in `7d6c349` and `6ba208a`. A template miss produces `Needs seller`; there is no automatic fallback to `two_call_draft`. OpenRouter comparison requests deliberately omit the optional `parallel_tool_calls` hint because `require_parameters=true` otherwise excludes models such as Kimi K3 that support required tool choice but do not advertise that OpenAI-specific parameter; the local core still rejects multiple terminals. Exact OpenRouter model slugs and providers remain run-manifest inputs rather than guessed code constants.
 
-The legacy pre-commit live matrix does not select a release cell. Direct-OpenAI Luna `one_call_template` reached 66/72 broker-accepted suggestions and 3,414.37 ms all-event workload p95, versus 54/72 and 4,530.28 ms for `two_call_draft`; DeepSeek and Kimi OpenRouter cells also failed. Those artifacts predate semantic oracle v2 and denominator separation. The current evaluator gives every answerable parent an explicit expected category, fact type, template, and optional exact variant; it gates on semantic correctness and uses answerable-parent acceptance-to-publication p95 while retaining all-event, model-backed, R2-published, and R3-committed distributions. Direct OpenAI sends `reasoning_effort` and optional `service_tier`; OpenRouter receives unified `reasoning.effort`, with fallback disabled and no OpenAI service-tier field. M3B.6 stays open pending the builder-approved optimization commit and a clean final rerun.
+The legacy pre-commit live matrix does not select a release cell. Direct-OpenAI Luna `one_call_template` reached 66/72 broker-accepted suggestions and 3,414.37 ms all-event workload p95, versus 54/72 and 4,530.28 ms for `two_call_draft`; DeepSeek and Kimi OpenRouter cells also failed. Those artifacts predate semantic oracle v2 and denominator separation. The current evaluator gives every answerable parent an explicit expected category, fact type, template, and optional exact variant; it gates on semantic correctness and uses answerable-parent acceptance-to-publication p95 while retaining all-event, model-backed, R2-published, and R3-committed distributions. Direct OpenAI sends `reasoning_effort` and optional `service_tier`; OpenRouter receives unified `reasoning.effort`, with fallback disabled and no OpenAI service-tier field. M3B.6 now stays open only for a credentialed live semantic/safety/latency rerun against the current committed tree.
 
 Local M2.3 marketplace, streaming UI, debugger, and M2.1 import-trace review command:
 
@@ -707,16 +793,11 @@ SIDESTAGE_MODEL_ID=gpt-5.6-luna SIDESTAGE_MODEL_REASONING_EFFORT=none \
   uv run uvicorn sidestage.app:create_live_app --factory --host 127.0.0.1 --port 8000
 ```
 
-Implementation-time confirmations:
+Remaining P0 release confirmations:
 
-- Exact pinned model identifier and structured-output adapter.
-- Exact core queue configuration and generic evaluation command.
-- Exact approved-template schemas, renderer version, and sanitized template-selection projection.
-- Exact baseline and template-agent handles returned by their startup registration functions.
-- Exact OpenRouter model slugs, resolved providers, routing configuration, usage, and cost fields used by the comparison.
-- Commit-bound generic and livesell queue, worker, hard-timeout, and latency-budget values.
-- Exact local run/test commands and any deployed URL.
-- Environment-variable names and reviewer credential instructions.
+- Final pinned release model and resolved provider, with fallback disabled and the implemented structured terminal contract unchanged.
+- Current-commit live semantic, hard-safety, queue/provider/stage, timeout, and answerable-parent p95 evidence.
+- Final reviewer URL/access credentials or the documented exact local live command.
 
 ## 18. Implementation sequence
 
