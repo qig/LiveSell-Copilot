@@ -1,16 +1,16 @@
 # SideStage Technical Design Document
 
-> Status: `Accepted` — the local P0 runtime and deterministic safety contracts are `Verified` at code head `3fda622`; a Vercel path correction is `Implemented` in the working tree, while the credentialed live-model latency gate remains open and is not `Measured`
+> Status: `Accepted` — the local P0 runtime and deterministic safety contracts are `Verified`; the stateful reviewer application is committed at `6c8afeb` with the disk-compatible Render Blueprint correction at `f7d03ab`, while authenticated remote end-to-end verification and the credentialed live-model latency gate remain open
 >
-> Last updated: 2026-08-18
+> Last updated: 2026-08-19
 >
 > Milestone 2 terminal implementation commit: `734d151`
 >
-> M3B runtime commit: `7d6c349`; replay/evaluation commit: `6ba208a`; optimization/DBG-023 commit: `12f3bab`
+> Live-Selling Copilot Adapter (M3B) runtime commit: `7d6c349`; replay/evaluation commit: `6ba208a`; optimization/DBG-023 commit: `12f3bab`
 >
-> Current deterministic P0 evidence: `uv run pytest -q` -> `376 passed, 5 deselected in 77.61s` at `3fda622`
+> Current deterministic P0 evidence: `uv run pytest -q` -> `380 passed, 5 deselected in 80.69s` at `6c8afeb`
 >
-> Final SideStage implementation commit: TBD
+> Stateful reviewer application commit: `6c8afeb`; Render Blueprint correction: `f7d03ab`
 >
 > Live run command: `uv run uvicorn sidestage.app:create_live_app --factory --host 127.0.0.1 --port 8000` after exporting the required model environment
 >
@@ -21,6 +21,15 @@
 ## 1. Scope and technical goals
 
 The implementation separates a domain-neutral `StaticAgentCore` from two concrete SideStage workflow modules. The core is a small asynchronous Python single-step agent harness: each `run()` accepts one immutable task with preassembled context, makes exactly one model request, validates exactly one statically registered terminal call, and returns a typed result. `one_call_template` registers one `EvidenceTemplateAgent`, builds a question-aware bounded evidence bundle before its only call, and asks that agent to select both evidence IDs and a versioned server-owned template. `two_call_draft` registers `EvidencePlannerAgent` and `ReplyDrafterAgent`; deterministic targeted retrieval runs between their two core calls. Both use the same routing, temporal binding, deterministic variant resolver, broker, persistence, and SLO boundary. The Optimization and Debug Session extension adds a closed startup catalog and per-show runtime selection among its immutable entries; it does not add a generic workflow object, user-authored registry, workflow engine, dynamic tool discovery, multi-turn continuation, cross-task memory, automatic provider/model fallback, or model effect authority.
+
+### M3 terminology
+
+| Milestone shorthand | Plain-language term | Responsibility |
+| --- | --- | --- |
+| **M3A — Reusable Agent Harness** | Product-neutral static Python agent runtime and evaluation harness | Owns immutable profile registration, task admission, FIFO scheduling, one provider request per task, terminal-call validation, typed results/failures, generic tracing, and independent scripted/live evaluation. It does not import seller, listing, inventory, policy, reply, or marketplace concepts and can be built and tested without M1 or M2. |
+| **M3B — Live-Selling Copilot Adapter** | SideStage's live-commerce adaptation of the reusable harness | Projects trusted seller/show/listing context into registered reply tasks; owns routing, retrieval, the one-call and two-call workflows, deterministic variant resolution, reply broker and effects, Manual review/Auto-message behavior, livesell pressure evaluation, and Ledger traces. It depends on the M1 data contracts, M2 marketplace runtime, and M3A harness. |
+
+Numbered labels such as M3A.1–M3A.4 and M3B.1–M3B.6 remain below only to preserve milestone, commit, test, and evidence traceability. In product-language discussion, this TDD uses **Reusable Agent Harness** and **Live-Selling Copilot Adapter**.
 
 All catalogs, policies, listings, inventories, chat events, and custom messages are synthetic mock test data. The prototype does not ingest real customer data or claim a production retention policy. Credentials and environment secrets must never enter event or trace payloads.
 
@@ -37,9 +46,9 @@ The current code implements the original P0 UI/marketplace design and the later 
 | Two-surface responsive seller UI, prepared/custom chat, latest valid Undo, Manual review, Auto-message, reply timeline, and developer Reset | `src/sidestage/web/static/`; 12 focused Playwright tests passed in 32.04s |
 | Deterministic routing and variant binding, tenant-first catalog/policy/FTS5 retrieval, two closed agent strategies, strict terminal validation, application rendering, brokered R2/R3 effects, and final freshness checks | `src/sidestage/copilot/`, `agent_core/`, and reply/routing/retrieval/R2/R3 tests |
 | Persisted eight-stage trace, evaluator-only oracle comparison, safety-race evaluation, pressure accounting, runtime selection, and SSE fan-out/reconnect | `src/sidestage/trace/`, `streaming/`, debugger UI, and trace/pressure/runtime/browser tests |
-| Complete protected reviewer boundary, fixed one-call release workflow, read-only debugger/runtime controls, disabled prepared burst, and atomic session/day quotas | Local `create_challenge_app()` behavior is verified through the `3fda622` full suite. A current uncommitted Vercel no-rewrite correction adds one regression; the focused file passes 9 tests in 0.55s but remains `Implemented`, not commit-bound `Verified`. |
+| Complete protected reviewer boundary, fixed one-call release workflow, read-only debugger/runtime controls, disabled prepared burst, persistent sessions, and atomic session/day quotas | `create_challenge_app()` and the stateful deployment contract are covered by the `6c8afeb` full suite (`380 passed, 5 deselected`). The disk-compatible Blueprint correction at `f7d03ab` passes all 12 challenge-deployment tests. The Render service returns public health `200` and anonymous application `401`; authenticated end-to-end and remote restart smoke remain pending. |
 
-The default suite passed `376 passed, 5 deselected in 77.61s` before the later reviewer-deployment corrections were introduced. The five deselected cases require real provider credentials and are intentionally outside deterministic P0 verification. Therefore the committed local code surface is `Verified`, but the live answerable-parent p95 below two seconds is still an open P0 release gate. The complete current working tree, including the Vercel routing correction, Mock livesell, restart-persistent sessions, and stateful deployment contract, passes `380 passed, 5 deselected in 77.03s`; this is regression evidence, not commit-bound `Verified` evidence. The deployment corrections require their own commit-bound rerun before a URL becomes the reviewer prototype. Neither gap can be renamed P1 merely to make P0 appear complete.
+The five deselected cases require real provider credentials and are intentionally outside deterministic P0 verification. The exact committed application tree at `6c8afeb`, including Vercel diagnostic routing, Mock livesell, restart-persistent sessions, and the stateful deployment contract, passed `380 passed, 5 deselected in 80.69s`. The later `f7d03ab` Blueprint-only correction passed all 12 challenge-deployment tests and the live Render boundary answered `/healthz` with `200` while refusing anonymous `/app/` access with the expected Basic-Auth `401`. These results verify deterministic structure and unauthenticated deployment protection; they do not replace the pending authenticated remote smoke or prove the answerable-parent p95 below two seconds. Neither gap can be renamed P1 merely to make P0 appear complete.
 
 P1 begins after this release gate: a real R0 Shadow pilot mode with operator-timing instrumentation, execution of the three-seller pilot, and—only if hosted concurrency requires it—migration from process-local sessions/SQLite/SSE wakeups to shared durable infrastructure. External marketplace integration, open-web research, production commerce, and a general dynamic agent runtime remain out of scope for v1 rather than unfinished P0 work.
 
@@ -126,7 +135,7 @@ The Vercel `api/index.py` adapter still points SQLite at `/tmp`. Vercel's zero-c
 
 ### Static agent-core boundary
 
-`StaticAgentCore` is reusable only for bounded single-decision runs. M3A exports `register_profile(profile) -> RegisteredAgentProfile` plus the immutable `AgentProfileRegistry`. Registration validates and compiles the input and terminal schemas, computes the canonical profile digest, and occurs before the first task. At process startup, `register_template_workflow()` registers only `EvidenceTemplateAgent`, while `register_two_call_workflow()` registers only `EvidencePlannerAgent` and `ReplyDrafterAgent`. Each concrete module returns fixed handles. The SideStage selector may choose among those prebuilt handles for a newly accepted question, but runtime requests cannot register an agent or add or replace templates, tools, instructions, model configuration, credentials, or effect authority.
+`StaticAgentCore` is reusable only for bounded single-decision runs. The Reusable Agent Harness (M3A) exports `register_profile(profile) -> RegisteredAgentProfile` plus the immutable `AgentProfileRegistry`. Registration validates and compiles the input and terminal schemas, computes the canonical profile digest, and occurs before the first task. At process startup, `register_template_workflow()` registers only `EvidenceTemplateAgent`, while `register_two_call_workflow()` registers only `EvidencePlannerAgent` and `ReplyDrafterAgent`. Each concrete module returns fixed handles. The SideStage selector may choose among those prebuilt handles for a newly accepted question, but runtime requests cannot register an agent or add or replace templates, tools, instructions, model configuration, credentials, or effect authority.
 
 The core accepts one `AgentTask` containing `task_id`, `adapter_id`, profile version and digest, an absolute monotonic deadline, bounded adapter-prepared model input, and non-model-visible correlation metadata. The core queues the task, performs one provider request, validates that the response contains exactly one allowed terminal call, and returns `AgentRunResult`. Terminal arguments use strict JSON object parsing: non-finite constants and duplicate object keys are malformed rather than silently normalized. The result is either a decoded terminal intent or a typed core failure such as `unknown_tool`, `missing_terminal_call`, `multiple_terminal_calls`, `malformed_arguments`, `provider_error`, `cancelled`, or `hard_timeout`. The core never executes the terminal intent.
 
@@ -187,13 +196,13 @@ runs/<run_id>/
   evaluation.json
 ```
 
-An M3A manifest records `evaluation_scope=agent_core`, agent-profile version and digest, generator version, seed, fixed/live clock metadata, model mode, identifier, configuration reference, sanitized live-provider base URL when applicable, queue/deadline configuration, scenario digest, implementation commit, and worktree-dirty flag. It never records the provider credential. Its event stream records generic task acceptance and completion; its oracle records expected terminal or typed-failure outcomes. M3A results may report terminal-contract compliance, queue behavior, provider behavior, core latency, and trace completeness, but never SideStage grounding or livesell safety.
+A Reusable Agent Harness (M3A) manifest records `evaluation_scope=agent_core`, agent-profile version and digest, generator version, seed, fixed/live clock metadata, model mode, identifier, configuration reference, sanitized live-provider base URL when applicable, queue/deadline configuration, scenario digest, implementation commit, and worktree-dirty flag. It never records the provider credential. Its event stream records generic task acceptance and completion; its oracle records expected terminal or typed-failure outcomes. Harness results may report terminal-contract compliance, queue behavior, provider behavior, core latency, and trace completeness, but never SideStage grounding or live-selling safety.
 
-An M3B scenario contains livesell workload counts, timing constraints, scheduled operations, and a seed. Its `events.jsonl` is the exact generated stream for incremental replay. Its `oracle.json` maps generated event IDs to evaluator-only expected routes and outcomes and must never enter retrieval or model context. Its `manifest.json` records `evaluation_scope=sidestage_e2e`, schema and generator versions, seed, seller/chat-data digests, agent-profile digest, scenario ID, run ID, model, configuration, implementation commit, and worktree state.
+A Live-Selling Copilot Adapter (M3B) scenario contains livesell workload counts, timing constraints, scheduled operations, and a seed. Its `events.jsonl` is the exact generated stream for incremental replay. Its `oracle.json` maps generated event IDs to evaluator-only expected routes and outcomes and must never enter retrieval or model context. Its `manifest.json` records `evaluation_scope=sidestage_e2e`, schema and generator versions, seed, seller/chat-data digests, agent-profile digest, scenario ID, run ID, model, configuration, implementation commit, and worktree state.
 
 Pydantic models are authoritative for agent-core contracts and, once the runtime begins in Milestone 2, for imported and mutable livesell state. Embedded adapter input and terminal-argument schemas use JSON Schema Draft 2020-12 and are compiled at startup only after the immutable Pydantic profile envelope passes validation. Money is integer minor units such as cents and entity versions are monotonic integers. Scenario time is relative `at_ms`; the same input-data digests, profile digest, generator version, and seed must produce byte-identical events. Different livesell seeds may vary only allowlisted fields: synthetic customer identity, wording template, emoji, valid SKU or variant choice, and timing jitter. Event-class counts and safety invariants remain fixed. Exploratory runs print and retain their seed; regression tests use fixed seeds.
 
-### M3B `pressure_v1` livesell generation recipe
+### Live-Selling Copilot Adapter (M3B) `pressure_v1` generation recipe
 
 The pressure generator is quota-first. The weights and timing jitter in `chat_messages.json` drive casual prepared-chat playback; they never determine pressure-profile denominators. For each seller, `pressure_v1.json` requires exactly these mutually exclusive emitted-event counts:
 
@@ -277,7 +286,7 @@ All persisted UTC timestamps use ISO 8601 with millisecond precision. Stage timi
 
 ## 3. Planned agent and reply pipelines
 
-### M3A static agent-core pipeline
+### Reusable Agent Harness (M3A) pipeline
 
 ```text
 AgentProfile
@@ -293,7 +302,7 @@ Adapter-prepared AgentTask
 
 The core does not retrieve context, execute a tool, authorize an effect, persist a domain receipt, or publish a domain event. Terminal-call validation is an output contract, not tool execution. Registration is startup-only: M3A exposes the generic `register_profile()`/`AgentProfileRegistry` API, while the livesell profile and `register_livesell_reply_agent()` convenience function belong to M3B. Generic tests use a small synthetic adapter and effect spy outside the core to prove that a registered profile can accept a task and return independently brokerable intent without importing SideStage.
 
-### M3B livesell reply pipelines
+### Live-Selling Copilot Adapter (M3B) reply pipelines
 
 ```text
 Chat event
@@ -343,7 +352,7 @@ For the retained `two_call_draft` baseline, immutable `EvidencePlanningTask` pro
 
 ## 4. Approved trace stages
 
-M3A emits adapter-neutral core events for task accepted, queued, provider request started, provider response completed, terminal validation completed, and run completed or failed. Each event records task, adapter, profile, run, trace, model, and scenario identifiers plus monotonic queue, provider, parse, and total durations. The SideStage tracer separately records stage-4 evidence planning: a non-core analysis request on the baseline or deterministic plan construction on the challenger. Model-visible input and decoded output may be retained only in sanitized synthetic evaluation artifacts; secrets and non-model-visible adapter authority are excluded.
+The Reusable Agent Harness (M3A) emits adapter-neutral core events for task accepted, queued, provider request started, provider response completed, terminal validation completed, and run completed or failed. Each event records task, adapter, profile, run, trace, model, and scenario identifiers plus monotonic queue, provider, parse, and total durations. The SideStage tracer separately records stage-4 evidence planning: a non-core analysis request on the baseline or deterministic plan construction on the challenger. Model-visible input and decoded output may be retained only in sanitized synthetic evaluation artifacts; secrets and non-model-visible adapter authority are excluded.
 
 The SideStage diagnostic UI renders the stage observations emitted by the exact `process_customer_reply()` invocation. It does not maintain a second workflow definition, infer completion from fixture content, or mark a stage successful because a component exists elsewhere in the process. The authoritative mapping is:
 
@@ -518,7 +527,7 @@ Each rollback is a version-checked internal compensating action linked to its or
 
 ## 12. Latency boundary and budget
 
-M3A records `agent_core_latency` from the monotonic instant an immutable `AgentTask` is accepted by `StaticAgentCore` through production of `AgentRunResult`. It reports core queue wait, provider request, terminal parsing, and total core duration separately. Generic scripted and live-model core runs are labeled `evaluation_scope=agent_core`; they are useful for capacity and provider selection but do not prove SideStage's two-second SLO.
+The Reusable Agent Harness (M3A) records `agent_core_latency` from the monotonic instant an immutable `AgentTask` is accepted by `StaticAgentCore` through production of `AgentRunResult`. It reports core queue wait, provider request, terminal parsing, and total core duration separately. Generic scripted and live-model core runs are labeled `evaluation_scope=agent_core`; they are useful for capacity and provider selection but do not prove SideStage's two-second SLO.
 
 The SideStage two-second SLO starts at trusted chat `accepted_at`. For R2 it ends when a complete safe review or `needs_seller` card is published to the Inbox stream. For R3 it ends when the atomic auto-reply transaction commits and the corresponding chat event is published. Livesell routing, pinned-selection resolution, strategy-specific evidence planning, retrieval, registered-agent dispatch wait, every provider request, terminal parsing/rendering, broker work, persistence, and backend publication are included. The debugger switch action occurs before later chat acceptance and is excluded from reply latency. The objective is p95 under two seconds across eligible questions; it is not a per-request deadline. Browser rendering and seller decision time are measured separately because the acceptance evaluator runs on the backend.
 
@@ -595,11 +604,11 @@ M2.debugger additionally exposes one bounded M2.1 import observation alongside t
 
 This import observation is transport/runtime evidence for M2.1 only; it is not durable, does not establish marketplace authority, and does not upgrade fixture labels into runtime evidence. `src/sidestage/web/server.py` remains a historical M2.0/M2.1 review utility; the authoritative current transport is the FastAPI endpoint in `src/sidestage/app.py`.
 
-The old M2 seven-stage presentation fixture is superseded and is no longer the debugger's default reply source. The current M3B debugger reads persisted eight-stage observations emitted around the actual `process_customer_reply()` component calls, preserves backend component and observation identifiers, and renders dependent stages as skipped after typed early exits. The browser neither maintains its own stage catalog nor infers success from component presence. Generic M3A results remain separately scoped and cannot make a livesell trace appear end-to-end green.
+The old M2 seven-stage presentation fixture is superseded and is no longer the debugger's default reply source. The current Live-Selling Copilot Adapter (M3B) debugger reads persisted eight-stage observations emitted around the actual `process_customer_reply()` component calls, preserves backend component and observation identifiers, and renders dependent stages as skipped after typed early exits. The browser neither maintains its own stage catalog nor infers success from component presence. Generic Reusable Agent Harness (M3A) results remain separately scoped and cannot make a live-selling trace appear end-to-end green.
 
 ## 16. Test strategy
 
-The M3A agent-core suite must run without importing or loading M1/M2 modules or fixtures and map exact test names and commands to:
+The Reusable Agent Harness (M3A) suite must run without importing or loading M1/M2 modules or fixtures and map exact test names and commands to:
 
 - Startup profile validation, stable profile digests, and rejection of runtime tool or policy mutation.
 - Public `register_profile()` behavior, immutable startup-registry resolution, duplicate-profile rejection, and proof that no task can register or replace an agent at runtime.
@@ -612,7 +621,7 @@ The M3A agent-core suite must run without importing or loading M1/M2 modules or 
 - Nonblocking core tracing, trace completeness for success and every typed early exit, and measured tracing overhead.
 - An effect spy proving that the core itself performs no effect and never reports an adapter effect as executed.
 
-The M3B SideStage suite must run the same core through the hardcoded reply function and additionally map exact test names and commands to:
+The Live-Selling Copilot Adapter (M3B) suite must run the same core through the hardcoded reply function and additionally map exact test names and commands to:
 
 - Stream ordering, reconnect, backpressure, and burst behavior.
 - Fixed-seed regression replay, multi-seed invariant sweeps, and failing-seed reporting.
@@ -676,9 +685,9 @@ The exact local run and full-suite commands are recorded in this document. No se
 
 ## 17. Code map and implementation status
 
-Current deterministic local P0 code head is `3fda622`. The exact command `uv run pytest -q` passed with `376 passed, 5 deselected in 77.61s`; the focused seller/debugger Playwright gate passed 12 tests in 32.04s. The five deselected tests are credential-gated live-provider cases, so this evidence verifies implementation and safety structure but does not measure the final live SLO. Later uncommitted reviewer-deployment corrections now cover Vercel request paths, Mock livesell, restart-safe digested sessions, the deployment database path, and the single-instance persistent container contract; they remain `Implemented` until committed and rerun.
+Current deterministic local application head is `6c8afeb`. The exact command `uv run pytest -q` passed with `380 passed, 5 deselected in 80.69s`; the five deselected tests are credential-gated live-provider cases, so this evidence verifies implementation and safety structure but does not measure the final live SLO. Commit `f7d03ab` removes Render's unsupported shutdown-delay/disk combination and its focused challenge-deployment file passes 12 tests. The live Render URL has passed public health and anonymous Basic-Auth-boundary checks; authenticated end-to-end and restart verification remain open.
 
-The protected reviewer extension adds `src/sidestage/deployment.py`, `src/sidestage/app.py::create_challenge_app`, `Dockerfile`, `.dockerignore`, `render.yaml`, and the diagnostic-only `api/index.py`/Vercel files. Its tests cover fail-closed credentials, complete static/API/debugger/SSE authentication, one-call/read-only runtime constraints, single-message **Mock livesell** capability with disabled batch burst, atomic per-session/global quotas, pre-provider rejection, restart-persistent digested sessions plus listing/chat/quota state, deployment database selection, the stateful container contract, and Vercel import behavior. Mock livesell retains the browser's fixed 1.65-second cadence and submits only `count=1`; it deliberately does not wait for the prior workflow to finish because the registered Agent Core FIFO scheduler owns admission order, queue delay, backpressure, and latency traces. See DBG-029 through DBG-032. A Vercel function preview still has process/SQLite durability limits; the reliable accepted topology is the one-instance persistent container.
+The protected reviewer extension adds `src/sidestage/deployment.py`, `src/sidestage/app.py::create_challenge_app`, `Dockerfile`, `.dockerignore`, `render.yaml`, and the diagnostic-only `api/index.py`/Vercel files. Its tests cover fail-closed credentials, complete static/API/debugger/SSE authentication, one-call/read-only runtime constraints, single-message **Mock livesell** capability with disabled batch burst, atomic per-session/global quotas, pre-provider rejection, restart-persistent digested sessions plus listing/chat/quota state, deployment database selection, the stateful container contract, and Vercel import behavior. Mock livesell retains the browser's fixed 1.65-second cadence and submits only `count=1`; it deliberately does not wait for the prior workflow to finish because the registered Agent Core FIFO scheduler owns admission order, queue delay, backpressure, and latency traces. See DBG-029 through DBG-033. A Vercel function preview still has process/SQLite durability limits; the reliable accepted topology is the one-instance persistent container.
 
 The committed Milestone 2 implementation terminates at `734d151` and has these concrete runtime files:
 
@@ -759,7 +768,7 @@ uv run python -m sidestage.agent_core.evaluation --scenario fixtures/agent_core/
 
 M3A.4 is `Verified` for its deterministic contracts by the commit-bound full suite at code head `6ba208a`. Its retained scripted artifact still records the earlier dirty tree, so that artifact and its synthetic timing are not promoted to `Measured`. The scripted run has 20/20 expected outcomes, 16/16 expected provider calls, zero effects, complete traces for all 20 tasks, valid FIFO order, two full-queue rejections, two queued hard timeouts, and about 140 ms synthetic total p95. Its trace benchmark constructs and emits 2,000 validated events and reports about 0.0034 ms p95 per event. An exploratory four-task live matrix using `gpt-5.6-luna` with `reasoning_effort=none` produced 4/4 expected terminal outcomes, four complete traces, zero failures, and zero effects. Provider p95 was about 1,065 ms, but the two-worker queue added about 1,015 ms p95 and total core p95 was about 2,057 ms, missing the 1,450 ms generic core budget. With only four tasks, nearest-rank p95 equals the maximum; this is compatibility and diagnostic evidence, not a stable latency measurement or final model selection. These values describe only the declared generic workload; they do not prove the SideStage two-second end-to-end SLO, livesell safety, GMV lift, conversion lift, or reduced operator load.
 
-The committed M3B runtime (`7d6c349`) and replay/evaluation slice (`6ba208a`) add:
+The committed Live-Selling Copilot Adapter (M3B) runtime (`7d6c349`) and replay/evaluation slice (`6ba208a`) add:
 
 - `src/sidestage/domain/replies.py` and `src/sidestage/copilot/`: immutable livesell reply contracts; exact/normalized duplicate routing; ask-time listing binding; typed analysis; tenant-first exact/FTS5 retrieval; registered M3A reply profile; the hardcoded eight-stage pipeline; independent effect broker; R2 result handling; R3 capability/final revalidation; and bounded per-show/global scheduling.
 - `src/sidestage/trace/recorder.py`, `projection.py`, `evaluator.py`, and `pressure.py`: persisted eight-stage runtime observations, nonblocking trace buffering, scripted safety cases, and live/scripted pressure scorecards with queue/stage/end-to-end latency and hard-invariant reporting.
@@ -807,8 +816,8 @@ Implementation follows four independently reviewable phases with one deliberate 
 
 1. **M1 — P0 Presentation-Ready Synthetic Data:** Direct seller information and prepared chat pools validated with lightweight artifact checks; no standalone M1 frontend is maintained.
 2. **M2 — Livesell Marketplace Emulator:** The approved M2.0 workspace supplies the single visual surface. M2.1 imports the M1 fixtures into typed records and validates seller, policy, catalog, inventory, prepared-chat, custom-chat, and responsive data projection before the later non-AI marketplace gates add authoritative operations.
-3. **M3A — General Static Agent Harness:** Domain-neutral Python task/profile/result contracts, one-request core, static terminal-call validation, scripted and live model runners, generic scheduling, tracing, deterministic evaluation, failure injection, and core latency measurement. M3A may begin after the design baseline and has no implementation or fixture dependency on M1 or M2.
-4. **M3B — Livesell Reply Adapter and Copilot:** SideStage task projection, retrieval, reply terminal intents, effect broker, R2/R3 UX, livesell generation/replay, diagnostic tracing, safety races, and end-to-end latency measurement. M3B requires M1, M2, and M3A.
+3. **M3A — Reusable Agent Harness:** Domain-neutral Python task/profile/result contracts, one-request core, static terminal-call validation, scripted and live model runners, generic scheduling, tracing, deterministic evaluation, failure injection, and core latency measurement. M3A may begin after the design baseline and has no implementation or fixture dependency on M1 or M2.
+4. **M3B — Live-Selling Copilot Adapter:** SideStage task projection, retrieval, reply terminal intents, effect broker, Manual review/Auto-message UX, livesell generation/replay, diagnostic tracing, safety races, and end-to-end latency measurement. M3B requires M1, M2, and M3A.
 
 Each phase must have an exact run or validation command before a dependent phase begins. M3A generic artifacts and metrics remain separately labeled from M3B product evidence. Runtime phases require focused tests; static M1 artifacts use the JSON checks documented above, while M2.1 reuses the existing M2.0 browser flow for visual data-projection checks. Commands become evidence only after the implementation makes them executable and records their exact results.
 
