@@ -865,6 +865,18 @@ Record fixes that appeared plausible but failed, degraded another invariant, or 
 - **Verification:** Deployment `dpl_9nYnHsB2ihNLrry8KX8PfEp9dJNP` reached Ready. `vercel curl /api/sellers --deployment <new-preview> -- --user <rotated-credentials>` returned HTTP `200`, `challenge_mode=true`, `prepared_stream=true`, and `prepared_burst=false`.
 - **Prevention:** Treat deployment-target credentials as scoped configuration. Verify the exact URL with the exact supplied credentials before handing it to a builder or reviewer; never infer that Production and Preview encrypted values match.
 
+### DBG-033 — Render rejected an explicit shutdown delay on the persistent-disk service
+
+- **Date and commit:** 2026-08-19; first Blueprint import of deployment commit `6c8afeb`; correction is in the current working tree.
+- **Incident state:** Fixed locally; corrected Blueprint deployment and remote smoke pending.
+- **Evidence maturity:** `Implemented`, not commit-bound `Verified` or remotely deployed evidence.
+- **Expected:** Render accepts the repository-root `render.yaml` and presents the Docker Starter service, one instance, one 1 GB `/var/data` disk, health check, and two secret inputs for deployment.
+- **Observed:** Blueprint import stopped with `services[0].maxShutdownDelaySeconds: max shutdown delay is not supported for services with a disk`.
+- **Root cause:** Render's published Blueprint JSON Schema validated `maxShutdownDelaySeconds` and `disk` independently but did not encode the deployment-layer incompatibility between them. The local schema check therefore passed an invalid field combination.
+- **Fix:** Remove `maxShutdownDelaySeconds` from the disk-backed service and rely on Render's supported disk-service shutdown behavior. Preserve the persistent disk because coherent SQLite session, marketplace, quota, and SSE-offset state is the primary reviewer requirement.
+- **Regression:** Extend `test_stateful_deployment_contract_uses_one_instance_and_persistent_sqlite` to reject any future `maxShutdownDelaySeconds` key while continuing to require Docker, one instance, `/healthz`, `/var/data`, and server-only secrets. The new assertion first failed against `6c8afeb` exactly on the unsupported key.
+- **Remaining risk:** Schema validation alone cannot prove every cross-field deployment constraint. The corrected Blueprint must be imported by Render and the resulting service must pass authenticated runtime and restart-persistence smoke tests before remote deployment is considered verified.
+
 ## 10. Known issues and limitations
 
 - M2.3 uses synthetic shared-credential demo sessions rather than production authentication. Their opaque token authority now persists as a digest in SQLite and survives a restart on the accepted single-instance persistent-disk topology; it is not a horizontally shared identity service.

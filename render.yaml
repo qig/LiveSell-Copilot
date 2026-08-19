@@ -6,7 +6,6 @@ services:
     region: oregon
     numInstances: 1
     healthCheckPath: /healthz
-    maxShutdownDelaySeconds: 30
     dockerfilePath: ./Dockerfile
     dockerContext: .
     disk:

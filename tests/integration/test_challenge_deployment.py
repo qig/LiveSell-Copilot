@@ -344,6 +344,7 @@ def test_stateful_deployment_contract_uses_one_instance_and_persistent_sqlite() 
     assert "numInstances: 1" in blueprint
     assert "healthCheckPath: /healthz" in blueprint
     assert "mountPath: /var/data" in blueprint
+    assert "maxShutdownDelaySeconds" not in blueprint
     assert "SIDESTAGE_DEMO_PASSWORD" in blueprint
     assert "sync: false" in blueprint
 
