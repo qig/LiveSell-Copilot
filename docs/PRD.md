@@ -122,6 +122,7 @@ The prototype keeps the complete epoch history for the bounded synthetic show. T
 - Internal receipts, verification, and conditional rollback for all five seller operations.
 - Eight-stage diagnostic traces sourced from the exact backend component calls, plus end-to-end latency measurement.
 - A developer-only, per-show Optimization and Debug Session selector over startup-approved workflows and model profiles; the seller workspace displays the active selection read-only.
+- A challenge-only reviewer deployment mode protected at the complete server boundary by shared credentials, fixed to the one-call workflow and one configured model, with persisted daily request admission. Its debugger is read-only and prepared bursts are disabled. This is bounded prototype access control, not production seller authentication.
 - Failure injection and deterministic replay.
 
 ### Out of scope

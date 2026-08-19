@@ -37,6 +37,12 @@
   let resetPending = false;
   let inboxAgeTimer = null;
   let inboxBucketSignature = "";
+  let demoCapabilities = {
+    challenge_mode: false,
+    prepared_stream: true,
+    prepared_burst: true,
+    runtime_mutable: true,
+  };
   const expandedEarlierQuestions = new Set();
   const questionFirstSeenAt = new Map();
 
@@ -47,6 +53,7 @@
     bindEvents();
     try {
       const response = await api("/api/sellers");
+      demoCapabilities = {...demoCapabilities, ...(response.demo_capabilities || {})};
       sellers = [...response.sellers].sort(
         (a, b) => SELLER_ORDER.indexOf(a.seller_id) - SELLER_ORDER.indexOf(b.seller_id),
       );
@@ -779,7 +786,7 @@
   }
 
   function startFixture() {
-    if (streamTimer || !activeListing() || resetPending) return;
+    if (!demoCapabilities.prepared_stream || streamTimer || !activeListing() || resetPending) return;
     appendPrepared(1);
     streamTimer = window.setInterval(() => appendPrepared(1), 1650);
     renderFixtureState();
@@ -803,9 +810,13 @@
     dom.toggleStream.querySelector("svg").innerHTML = playing
       ? '<path d="M8 5h3v14H8zM14 5h3v14h-3z" />'
       : '<path d="M8 5v14l11-7z" />';
-    dom.toggleStream.disabled = !canChat;
+    dom.toggleStream.disabled = !canChat || !demoCapabilities.prepared_stream;
     dom.stepStream.disabled = !canChat;
-    dom.burstStream.disabled = !canChat;
+    dom.burstStream.disabled = !canChat || !demoCapabilities.prepared_burst;
+    if (demoCapabilities.challenge_mode) {
+      dom.toggleStream.title = "Continuous prepared traffic is disabled in the shared challenge demo.";
+      dom.burstStream.title = "Prepared bursts are disabled in the shared challenge demo.";
+    }
     dom.chatInput.disabled = !canChat;
     dom.chatSend.disabled = !canChat;
     dom.chatStageGuidance.hidden = canChat;

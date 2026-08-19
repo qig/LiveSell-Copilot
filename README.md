@@ -57,6 +57,36 @@ With both keys present, `create_live_app` loads [`config/runtime_model_profiles.
 
 Then run `uv run --env-file .env uvicorn sidestage.app:create_live_app --factory --host 127.0.0.1 --port 8000`. `create_live_app` requires the key matching the selected provider, uses strict function schemas, and exits before database initialization on a missing or mismatched key, model, provider, or strategy. OpenRouter requests disable fallbacks, require parameter support, sort by latency for screening, and opt into router metadata. Credentials never enter application state, model-visible input, or trace metadata.
 
+## Share the protected challenge demo
+
+Use a dedicated OpenAI project key for the shared reviewer deployment. Do not reuse a personal development key. The challenge factory protects the complete page/API/debugger/SSE surface with server-side HTTP Basic authentication, fixes execution to `one_call_template`, loads only the configured provider/model, disables runtime mutation and prepared bursts, and reserves a SQLite-backed daily allowance before provider work.
+
+Set these server-only deployment variables. In Vercel, mark the key and password as **Sensitive** and scope them to Production (and to Preview only when intentionally testing a protected preview):
+
+```bash
+OPENAI_API_KEY=dedicated-reviewer-key
+SIDESTAGE_MODEL_PROVIDER=openai
+SIDESTAGE_MODEL_ID=gpt-5.6-luna
+SIDESTAGE_MODEL_REASONING_EFFORT=none
+SIDESTAGE_DEMO_USERNAME=ai-fund-reviewer
+SIDESTAGE_DEMO_PASSWORD=generate-a-long-unique-password
+SIDESTAGE_DEMO_MAX_REQUESTS_PER_SESSION=20
+SIDESTAGE_DEMO_MAX_REQUESTS_PER_DAY=100
+```
+
+Do not set `OPENROUTER_API_KEY`, `SIDESTAGE_RUNTIME_MODEL_CATALOG_PATH`, or `SIDESTAGE_MODEL_SERVICE_TIER` on the public challenge deployment unless you deliberately revise the cost boundary. The app never sends the username, password, or provider key to the browser. `.vercelignore` also excludes the local `.env`, virtual environment, tests, internal docs, run artifacts, and local database from CLI uploads.
+
+For a local protected smoke test:
+
+```bash
+uv run --env-file .env uvicorn sidestage.app:create_challenge_app \
+  --factory --host 127.0.0.1 --port 8000
+```
+
+For the Vercel preview, import the GitHub repository, add the variables above in Project Settings, deploy, and open the generated URL. `api/index.py` uses `/tmp/sidestage.sqlite3` because Vercel Functions do not provide this prototype with a shared persistent SQLite volume. A cold start or another function instance can therefore reset or diverge synthetic show state. This is acceptable only as a clearly disclosed preview. The reliable reviewer deployment runs the same `create_challenge_app` factory as one stateful ASGI instance with a persistent SQLite path; moving the final URL to horizontally scaled Vercel Functions requires a shared database, session store, and SSE notification service.
+
+Give reviewers the URL plus the shared username/password in the submission's **Access notes**. Keep the source repository free of credentials, monitor the dedicated OpenAI project, and rotate or delete its key after judging.
+
 Run the deterministic test suite with:
 
 ```bash

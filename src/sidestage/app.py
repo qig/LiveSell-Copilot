@@ -24,6 +24,12 @@ from sidestage.config import (
     DEFAULT_RUNTIME_DATABASE,
     REPOSITORY_ROOT,
 )
+from sidestage.deployment import (
+    ChallengeAccessMiddleware,
+    ChallengeDeploymentConfig,
+    ChallengeUsageLimitError,
+    ChallengeUsageLimiter,
+)
 from sidestage.agent_core import (
     ModelRunner,
     OpenAICompatibleModelConfig,
@@ -157,6 +163,7 @@ def create_app(
     default_model_profile_id: Optional[str] = None,
     before_reply_receipt_insert: Optional[Callable[[], None]] = None,
     before_auto_send_commit: Optional[Callable[[], None]] = None,
+    challenge_config: Optional[ChallengeDeploymentConfig] = None,
 ) -> FastAPI:
     catalog = load_seller_fixture()
     clock = wall_clock or (lambda: datetime.now(timezone.utc))
@@ -192,7 +199,11 @@ def create_app(
                     request_timeout_s=(
                         runner_config.request_timeout_s if runner_config is not None else 5.0
                     ),
-                    supported_workflows=("one_call_template", "two_call_draft"),
+                    supported_workflows=(
+                        ("one_call_template",)
+                        if challenge_config is not None
+                        else ("one_call_template", "two_call_draft")
+                    ),
                 ),
                 configured_runner,
             ),
@@ -205,6 +216,15 @@ def create_app(
     )
     database = MarketplaceDatabase(database_path)
     database.initialize(catalog, evidence_imported_at=_utc_millis(clock()))
+    usage_limiter = (
+        ChallengeUsageLimiter(
+            database,
+            max_requests_per_session=challenge_config.max_requests_per_session,
+            max_requests_per_day=challenge_config.max_requests_per_day,
+        )
+        if challenge_config is not None
+        else None
+    )
     marketplace = MarketplaceService(database)
     stream_store = StreamEventStore(database)
     hub = SseHub(stream_store)
@@ -323,6 +343,9 @@ def create_app(
         version="0.3.5",
         description="Synthetic live-selling copilot with a closed registered agent workflow",
         lifespan=lifespan,
+        docs_url=None if challenge_config is not None else "/docs",
+        redoc_url=None if challenge_config is not None else "/redoc",
+        openapi_url=None if challenge_config is not None else "/openapi.json",
     )
     application.state.database = database
     application.state.marketplace = marketplace
@@ -347,10 +370,30 @@ def create_app(
     application.state.runtime_catalog = runtime_catalog
     application.state.runtime_selector = runtime_selector
     application.state.trace_sink = trace_sink
+    application.state.challenge_deployment = (
+        {
+            "enabled": True,
+            "max_requests_per_session": challenge_config.max_requests_per_session,
+            "max_requests_per_day": challenge_config.max_requests_per_day,
+        }
+        if challenge_config is not None
+        else {"enabled": False}
+    )
+    application.state.challenge_usage_limiter = usage_limiter
+
+    @application.get("/healthz", include_in_schema=False)
+    def health() -> dict:
+        return {"status": "ok"}
 
     @application.get("/api/sellers")
     def list_sellers() -> dict:
         return {
+            "demo_capabilities": {
+                "challenge_mode": challenge_config is not None,
+                "prepared_stream": challenge_config is None,
+                "prepared_burst": challenge_config is None,
+                "runtime_mutable": challenge_config is None,
+            },
             "sellers": [
                 {
                     "seller_id": seller.seller_id,
@@ -393,6 +436,12 @@ def create_app(
         session = sessions.require(session_token)
         async with demo_mutation_gate.mutation(session.authority):
             _require_active_listing(marketplace, session.authority)
+            usage = _reserve_challenge_usage(
+                usage_limiter,
+                session_token=session_token,
+                units=1,
+                now=clock(),
+            )
             result = await process_customer_reply(
                 RawCustomerReplyEvent(
                     authority=session.authority,
@@ -411,6 +460,7 @@ def create_app(
             return {
                 "events": [event.model_dump(mode="json")],
                 "pipeline_results": [result.model_dump(mode="json")],
+                **({"demo_usage": usage} if usage is not None else {}),
                 "snapshot": _snapshot(
                     catalog,
                     marketplace,
@@ -424,8 +474,22 @@ def create_app(
     @application.post("/api/sessions/{session_token}/chat/prepared", status_code=201)
     async def accept_prepared_chat(session_token: str, request: PreparedChatRequest) -> dict:
         session = sessions.require(session_token)
+        if challenge_config is not None and request.count != 1:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "challenge_burst_disabled",
+                    "message": "Prepared bursts are disabled in the shared challenge demo.",
+                },
+            )
         async with demo_mutation_gate.mutation(session.authority):
             _require_active_listing(marketplace, session.authority)
+            usage = _reserve_challenge_usage(
+                usage_limiter,
+                session_token=session_token,
+                units=request.count,
+                now=clock(),
+            )
             selected = prepared.take(session.authority.seller_id, request.count)
             results = await asyncio.gather(
                 *(
@@ -451,6 +515,7 @@ def create_app(
             return {
                 "events": [event.model_dump(mode="json") for event in events],
                 "pipeline_results": [result.model_dump(mode="json") for result in results],
+                **({"demo_usage": usage} if usage is not None else {}),
                 "snapshot": _snapshot(
                     catalog,
                     marketplace,
@@ -719,8 +784,19 @@ def create_app(
         session = sessions.require(session_token)
         active = runtime_selector.capture(session.authority)
         trace_sink.flush()
+        public_catalog = runtime_catalog.public_projection()
+        if challenge_config is not None:
+            public_catalog = {
+                **public_catalog,
+                "workflows": [
+                    item
+                    for item in public_catalog["workflows"]
+                    if item["workflow_id"] == "one_call_template"
+                ],
+            }
         return {
-            **runtime_catalog.public_projection(),
+            **public_catalog,
+            "runtime_mutable": challenge_config is None,
             "active_selection": active.model_dump(mode="json"),
             "next_sample_phase": runtime_selector.next_sample_phase(active),
             "latency": runtime_latency_projection(
@@ -736,6 +812,14 @@ def create_app(
         session_token: str = Query(min_length=1),
     ) -> dict:
         session = sessions.require(session_token)
+        if challenge_config is not None:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "challenge_runtime_read_only",
+                    "message": "Runtime selection is read-only in the shared challenge demo.",
+                },
+            )
         async with demo_mutation_gate.mutation(session.authority):
             try:
                 changed = runtime_selector.switch(
@@ -805,6 +889,14 @@ def create_app(
     def root() -> RedirectResponse:
         return RedirectResponse(url="/app/")
 
+    if challenge_config is not None:
+        application.add_middleware(
+            ChallengeAccessMiddleware,
+            username=challenge_config.username,
+            password=challenge_config.password,
+            realm=challenge_config.realm,
+        )
+
     return application
 
 
@@ -818,6 +910,8 @@ def create_live_app(
     workflow_strategy: Optional[
         Literal["two_call_draft", "one_call_template"]
     ] = None,
+    challenge_config: Optional[ChallengeDeploymentConfig] = None,
+    load_supplemental_profiles: bool = True,
 ) -> FastAPI:
     """Build the reviewer-facing app with a fail-fast closed live model catalog."""
 
@@ -888,19 +982,24 @@ def create_live_app(
                 reasoning_effort=runner.config.reasoning_effort,
                 service_tier=runner.config.service_tier,
                 request_timeout_s=runner.config.request_timeout_s,
-                supported_workflows=("one_call_template", "two_call_draft"),
+                supported_workflows=(
+                    ("one_call_template",)
+                    if challenge_config is not None
+                    else ("one_call_template", "two_call_draft")
+                ),
             ),
             runner,
         )
     ]
-    registrations.extend(
-        _supplemental_live_registrations(
-            configured_provider=provider,
-            configured_model_id=model_id,
-            configured_reasoning_effort=runner.config.reasoning_effort,
-            configured_service_tier=runner.config.service_tier,
+    if load_supplemental_profiles:
+        registrations.extend(
+            _supplemental_live_registrations(
+                configured_provider=provider,
+                configured_model_id=model_id,
+                configured_reasoning_effort=runner.config.reasoning_effort,
+                configured_service_tier=runner.config.service_tier,
+            )
         )
-    )
     application = create_app(
         database_path=database_path,
         wall_clock=wall_clock,
@@ -909,6 +1008,7 @@ def create_live_app(
         workflow_strategy=strategy,
         runtime_model_registrations=tuple(registrations),
         default_model_profile_id=default_profile_id,
+        challenge_config=challenge_config,
     )
     application.state.model_runtime = {
         "mode": "live",
@@ -926,6 +1026,41 @@ def create_live_app(
             if runner.config.openrouter_routing is not None
             else None
         ),
+    }
+    return application
+
+
+def create_challenge_app(
+    *,
+    database_path: Path = DEFAULT_RUNTIME_DATABASE,
+    wall_clock: Optional[WallClock] = None,
+    monotonic_clock: Callable[[], float] = time.monotonic,
+    prepared_seed: int = 20260817,
+) -> FastAPI:
+    """Build the access-protected, cost-bounded AI Fund challenge application."""
+
+    challenge_config = ChallengeDeploymentConfig.from_environment()
+    configured_base_url = os.environ.get("SIDESTAGE_MODEL_BASE_URL")
+    if (
+        configured_base_url is not None
+        and configured_base_url.rstrip("/") != "https://api.openai.com/v1"
+    ):
+        raise RuntimeError(
+            "challenge deployment only sends OPENAI_API_KEY to https://api.openai.com/v1"
+        )
+    application = create_live_app(
+        database_path=database_path,
+        wall_clock=wall_clock,
+        monotonic_clock=monotonic_clock,
+        prepared_seed=prepared_seed,
+        model_provider="openai",
+        workflow_strategy="one_call_template",
+        challenge_config=challenge_config,
+        load_supplemental_profiles=False,
+    )
+    application.state.model_runtime = {
+        **application.state.model_runtime,
+        "mode": "challenge",
     }
     return application
 
@@ -1012,6 +1147,34 @@ def _supplemental_live_registrations(
         )
         registrations.append(RuntimeModelRegistration(profile, profile_runner))
     return registrations
+
+
+def _reserve_challenge_usage(
+    limiter: Optional[ChallengeUsageLimiter],
+    *,
+    session_token: str,
+    units: int,
+    now: datetime,
+) -> Optional[dict]:
+    if limiter is None:
+        return None
+    try:
+        reservation = limiter.reserve(session_token, units=units, now=now)
+    except ChallengeUsageLimitError as error:
+        message = (
+            "This browser session has reached the shared demo allowance."
+            if error.code == "session_limit_reached"
+            else "The shared demo has reached today's model-call allowance."
+        )
+        raise HTTPException(
+            status_code=429,
+            detail={"code": error.code, "message": message},
+            headers={"Retry-After": "3600"},
+        ) from error
+    return {
+        "session_remaining": reservation.session_remaining,
+        "global_remaining": reservation.global_remaining,
+    }
 
 
 def _require_active_listing(

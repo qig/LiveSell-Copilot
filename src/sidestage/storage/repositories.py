@@ -114,6 +114,15 @@ CREATE TABLE IF NOT EXISTS stream_events (
 );
 CREATE INDEX IF NOT EXISTS stream_events_by_show
     ON stream_events(show_id, stream_offset);
+CREATE TABLE IF NOT EXISTS challenge_usage (
+    usage_number INTEGER PRIMARY KEY AUTOINCREMENT,
+    usage_day TEXT NOT NULL,
+    session_token_digest TEXT NOT NULL,
+    units INTEGER NOT NULL CHECK (units > 0),
+    accepted_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS challenge_usage_by_day
+    ON challenge_usage(usage_day, session_token_digest);
 CREATE TABLE IF NOT EXISTS copilot_questions (
     question_number INTEGER PRIMARY KEY AUTOINCREMENT,
     question_id TEXT NOT NULL UNIQUE,

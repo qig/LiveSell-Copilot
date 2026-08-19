@@ -152,8 +152,8 @@
         .join("");
       dom.runtimeWorkflow.value = active.workflow_id;
       dom.runtimeModel.value = active.model_profile_id;
-      dom.runtimeWorkflow.disabled = false;
-      dom.runtimeModel.disabled = false;
+      dom.runtimeWorkflow.disabled = runtimeConfig.runtime_mutable === false;
+      dom.runtimeModel.disabled = runtimeConfig.runtime_mutable === false;
       syncRuntimeCompatibility("active");
       renderRuntimeSummary();
       renderRuntimeMetrics();
@@ -185,7 +185,8 @@
       dom.runtimeModel.value = compatible?.profile_id || "";
     }
     const active = runtimeConfig.active_selection;
-    dom.runtimeApply.disabled = !dom.runtimeWorkflow.value
+    dom.runtimeApply.disabled = runtimeConfig.runtime_mutable === false
+      || !dom.runtimeWorkflow.value
       || !dom.runtimeModel.value
       || (dom.runtimeWorkflow.value === active.workflow_id
         && dom.runtimeModel.value === active.model_profile_id);
@@ -194,7 +195,7 @@
   async function applyRuntimeSelection(event) {
     event.preventDefault();
     const token = sessionToken();
-    if (!token || !runtimeConfig) return;
+    if (!token || !runtimeConfig || runtimeConfig.runtime_mutable === false) return;
     dom.runtimeApply.disabled = true;
     dom.runtimeStatus.textContent = "Applying the next per-show selection version…";
     try {
@@ -230,7 +231,9 @@
     dom.runtimeActiveModel.textContent = active.requested_model_id;
     dom.runtimeActiveProfile.textContent = active.model_profile_id;
     dom.runtimeActiveProvider.textContent = active.provider;
-    dom.runtimeStatus.textContent = `Version ${active.selection_version} is pinned only when a new chat event is accepted.`;
+    dom.runtimeStatus.textContent = runtimeConfig.runtime_mutable === false
+      ? `Version ${active.selection_version} is locked for this shared challenge deployment.`
+      : `Version ${active.selection_version} is pinned only when a new chat event is accepted.`;
   }
 
   function renderRuntimeMetrics() {
