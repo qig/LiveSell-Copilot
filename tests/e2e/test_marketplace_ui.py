@@ -110,7 +110,7 @@ def test_non_ai_marketplace_flow_is_server_owned_and_reconnectable(
             for seller_id in SELLER_ORDER
         ]
     )
-    expect(page.get_by_text("Review first", exact=True)).to_be_visible()
+    expect(page.get_by_text("Auto-message", exact=True)).to_be_visible()
     expect(page.locator("[data-operation]")).to_have_count(5)
     assert page.evaluate("localStorage.length") == 0
 

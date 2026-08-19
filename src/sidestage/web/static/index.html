@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="SideStage synthetic live-selling workspace with a review-first copilot inbox"
+      content="SideStage synthetic live-selling workspace with brokered copilot replies"
     />
     <title>SideStage — Marketplace emulator</title>
     <link rel="stylesheet" href="./styles.css" />
@@ -45,8 +45,8 @@
           <span id="stream-status">Room ready</span>
         </div>
         <button class="status-chip status-chip--muted r3-toggle" id="r3-toggle" type="button">
-          <span id="r3-toggle-label">Review first</span>
-          <span class="status-suffix">R2</span>
+          <span id="r3-toggle-label">Auto-message</span>
+          <span class="status-suffix">On</span>
         </button>
         <div class="status-chip runtime-badge" id="runtime-badge" title="Active debugger-selected runtime configuration">
           <span id="runtime-workflow">Runtime loading</span>
@@ -137,7 +137,7 @@
         <header class="surface-header show-surface-header">
           <div>
             <p class="eyebrow">Copilot inbox</p>
-            <h2 id="show-desk-title">Review before sending.</h2>
+            <h2 id="show-desk-title">Grounded answers can send automatically.</h2>
           </div>
           <div class="cue-readout">
             <span>Active SKU</span>
@@ -147,10 +147,10 @@
 
         <div class="r3-warning" id="r3-warning" role="status" hidden>
           <div>
-            <strong>Bounded auto-reply is on.</strong>
-            <p>Only fresh current price, exact variant availability, and exact policy answers can send automatically.</p>
+            <strong>Auto-message is on.</strong>
+            <p>Every fully grounded answer sends automatically. Questions that need judgment stay in Manual review.</p>
           </div>
-          <button class="button button--paper" id="r3-disable" type="button">Disable now</button>
+          <button class="button button--paper" id="r3-disable" type="button">Switch to Manual review</button>
         </div>
 
         <article class="active-cue" id="active-cue" aria-live="polite">
@@ -168,7 +168,7 @@
             </div>
             <span class="section-note" id="copilot-count">0 questions</span>
           </div>
-          <p class="copilot-assurance">AI drafts never send by themselves in R2. Accept, edit, or answer in your own words.</p>
+          <p class="copilot-assurance" id="copilot-assurance">Fully grounded answers send automatically. Questions needing judgment remain here for manual review.</p>
           <div class="copilot-panels" id="copilot-panels">
             <section class="copilot-panel copilot-panel--now" aria-labelledby="copilot-now-title">
               <header class="copilot-panel-header">
@@ -268,7 +268,7 @@
     </main>
 
     <footer class="workspace-footer">
-      <p><span>Synthetic demo state</span> Server-owned SQLite · SSE live sync · review-first AI · no customer commerce</p>
+      <p><span>Synthetic demo state</span> Server-owned SQLite · SSE live sync · brokered replies · no customer commerce</p>
     </footer>
 
     <dialog class="operation-dialog" id="operation-dialog">

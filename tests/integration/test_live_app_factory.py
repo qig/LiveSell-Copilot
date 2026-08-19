@@ -5,9 +5,12 @@ import os
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from sidestage.agent_core import OpenAICompatibleModelRunner
 from sidestage.app import create_live_app
+from sidestage.trace.recorder import BufferedTraceSink
 
 
 _MODEL_ENV = (
@@ -80,6 +83,47 @@ def test_live_app_factory_builds_one_sanitized_strict_runner_from_environment(
         response = client.get("/api/sellers")
         assert response.status_code == 200
         assert len(response.json()["sellers"]) == 3
+
+
+def test_live_app_lifespan_owns_trace_and_model_cleanup_without_legacy_events(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_model_environment(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "lifecycle-test-credential")
+    monkeypatch.setenv("SIDESTAGE_MODEL_ID", "gpt-5.6-luna")
+
+    def reject_removed_event_api(*_args, **_kwargs) -> None:
+        raise AssertionError("legacy add_event_handler API must not be used")
+
+    closed_trace_sinks: list[BufferedTraceSink] = []
+    closed_model_runners: list[OpenAICompatibleModelRunner] = []
+    original_trace_close = BufferedTraceSink.close
+    original_runner_close = OpenAICompatibleModelRunner.aclose
+
+    def record_trace_close(trace_sink: BufferedTraceSink) -> None:
+        closed_trace_sinks.append(trace_sink)
+        original_trace_close(trace_sink)
+
+    async def record_runner_close(runner: OpenAICompatibleModelRunner) -> None:
+        closed_model_runners.append(runner)
+        await original_runner_close(runner)
+
+    monkeypatch.setattr(
+        FastAPI,
+        "add_event_handler",
+        reject_removed_event_api,
+        raising=False,
+    )
+    monkeypatch.setattr(BufferedTraceSink, "close", record_trace_close)
+    monkeypatch.setattr(OpenAICompatibleModelRunner, "aclose", record_runner_close)
+
+    application = create_live_app(database_path=tmp_path / "lifespan.sqlite3")
+    with TestClient(application) as client:
+        assert client.get("/api/sellers").status_code == 200
+
+    assert closed_trace_sinks == [application.state.trace_sink]
+    assert closed_model_runners == [application.state.model_runner]
 
 
 def test_live_app_factory_prefers_scoped_key_without_exposing_it(

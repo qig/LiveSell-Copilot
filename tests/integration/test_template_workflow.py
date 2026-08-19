@@ -52,6 +52,7 @@ def _run_question(
     runner,
     *,
     question: str = "How much is this pair?",
+    manual_review: bool = True,
 ) -> tuple[dict, object]:
     app = create_app(
         database_path=tmp_path / "template.sqlite3",
@@ -62,6 +63,15 @@ def _run_question(
     with TestClient(app) as client:
         session = client.post("/api/demo/sessions", json={"seller_id": SELLER}).json()
         token = session["session_token"]
+        if manual_review:
+            manual = client.post(
+                f"/api/sessions/{token}/copilot/r3",
+                json={
+                    "enabled": False,
+                    "expected_version": session["snapshot"]["r3_capability"]["version"],
+                },
+            )
+            assert manual.status_code == 200
         push = client.post(
             f"/api/sessions/{token}/actions/push",
             json={"target_listing_id": LISTING, "expected_show_version": 1},
@@ -166,6 +176,27 @@ def test_one_call_exact_size_wording_projects_and_renders_one_trusted_variant(
     assert response["snapshot"]["outbound_replies"] == []
 
 
+def test_one_call_exact_absent_size_projects_one_negative_variant_fact(
+    tmp_path: Path,
+) -> None:
+    runner = AvailabilityTemplateRunner()
+
+    response, _app = _run_question(
+        tmp_path,
+        runner,
+        question="Is US M 6.5 available?",
+    )
+
+    model_evidence = runner.calls[0].request.model_input.to_dict()["evidence"]
+    variants = [item for item in model_evidence if item["fact_type"] == "variant_availability"]
+    assert len(variants) == 1
+    assert variants[0]["value"] == "US M 6.5: 0 available"
+    assert len(variants) == 1
+    assert response["pipeline_results"][0]["broker_decision"]["reply_text"] == (
+        "Availability: US M 6.5: 0 available"
+    )
+
+
 @pytest.mark.parametrize(
     "question",
     ("What sizes are available?", "How many pairs are left across all sizes?"),
@@ -186,6 +217,27 @@ def test_one_call_general_availability_projects_one_aggregate_not_all_variants(
     assert "Total available: 7 pairs" in summaries[0]["value"]
     assert result["broker_decision"]["outcome"] == "review"
     assert result["broker_decision"]["template_id"] == "reply_availability_summary"
+
+
+def test_one_call_availability_summary_auto_messages_from_one_aggregate(
+    tmp_path: Path,
+) -> None:
+    runner = AvailabilityTemplateRunner()
+
+    response, _app = _run_question(
+        tmp_path,
+        runner,
+        question="What sizes are available?",
+        manual_review=False,
+    )
+
+    result = response["pipeline_results"][0]
+    assert result["broker_decision"]["outcome"] == "auto_send"
+    assert result["publication"]["state"] == "auto_answered"
+    assert len(response["snapshot"]["outbound_replies"]) == 1
+    assert response["snapshot"]["reply_receipts"][0]["validated_versions"][
+        "inventory_summary_version"
+    ] > 0
 
 
 @pytest.mark.parametrize(

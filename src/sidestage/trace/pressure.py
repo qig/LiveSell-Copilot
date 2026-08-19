@@ -36,8 +36,16 @@ class PressureEvaluationError(RuntimeError):
 
 
 class CountingModelRunner:
-    def __init__(self, runner) -> None:
+    def __init__(
+        self,
+        runner,
+        *,
+        cooperative_yields: int = 0,
+        cooperative_probe_calls: int = 0,
+    ) -> None:
         self.runner = runner
+        self.cooperative_yields = cooperative_yields
+        self.cooperative_probe_calls = cooperative_probe_calls
         self.request_count = 0
         self.oracle_label_in_model_input = False
         self.provider_calls: list[dict[str, Any]] = []
@@ -56,6 +64,12 @@ class CountingModelRunner:
                 "oracle",
             }
         )
+        # The release one-call scripted cell models a bounded asynchronous HTTP
+        # boundary so its configured 15-call lane is exercised without adding
+        # machine-speed-dependent wall-clock delay.
+        if self.request_count <= self.cooperative_probe_calls:
+            for _ in range(self.cooperative_yields):
+                await asyncio.sleep(0)
         response = await self.runner.run(invocation)
         self.provider_calls.append(response.provider_metadata.to_dict())
         return response
@@ -321,7 +335,15 @@ async def _evaluate_replay(
         raise PressureEvaluationError("time scale cannot be negative")
     config_ref = f"sidestage-pressure-{strategy}-v2"
     raw_runner, model_metadata = _model_runner(model_mode, config_ref)
-    runner = CountingModelRunner(raw_runner)
+    runner = CountingModelRunner(
+        raw_runner,
+        cooperative_yields=(
+            32 if model_mode == "scripted" and strategy == "one_call_template" else 0
+        ),
+        cooperative_probe_calls=(
+            15 if model_mode == "scripted" and strategy == "one_call_template" else 0
+        ),
+    )
     app = create_app(
         database_path=database_path,
         prepared_seed=replay.seed,
@@ -466,7 +488,7 @@ def _pressure_report(
             "SELECT * FROM copilot_outbound_replies"
         ).fetchall()
         receipt_rows = connection.execute(
-            "SELECT reply_id FROM copilot_reply_receipts"
+            "SELECT * FROM copilot_reply_receipts"
         ).fetchall()
         artifact_rows = connection.execute(
             "SELECT trace_id, artifact_kind, payload_json FROM copilot_trace_artifacts"
@@ -500,6 +522,11 @@ def _pressure_report(
         row["question_id"]: json.loads(row["evidence_snapshot_json"])
         for row in suggestion_rows
     }
+    snapshot_by_trace = {
+        row["trace_id"]: json.loads(row["payload_json"])
+        for row in artifact_rows
+        if row["artifact_kind"] == "evidence_snapshot"
+    }
     answerable_actual_ids: set[str] = set()
     for actual_id, row in actual_by_event.items():
         source = source_by_actual[actual_id]
@@ -526,7 +553,10 @@ def _pressure_report(
             expected = oracle["expected_semantic"]
             result = result_by_actual[actual_id]
             decision = result.broker_decision
-            snapshot = suggestion_by_question.get(row["question_id"], {})
+            snapshot = suggestion_by_question.get(
+                row["question_id"],
+                snapshot_by_trace.get(row["trace_id"], {}),
+            )
             records_by_id = {
                 record["evidence_id"]: record for record in snapshot.get("records", [])
             }
@@ -694,7 +724,18 @@ def _pressure_report(
     duplicate_canonical_writes = sum(
         count - 1 for count in canonical_counts.values() if count > 1
     )
-    r3_count = sum(row["mode"] == "r3" for row in outbound_rows)
+    authorized_r3_reply_ids = {
+        row["reply_id"]
+        for row in receipt_rows
+        if row["mode"] == "r3"
+        and row["broker_outcome"] == "auto_send"
+        and row["guardrail_verdict"] == "r3_final_revalidated"
+        and row["authorization_version"] is not None
+    }
+    unauthorized_r3_writes = sum(
+        row["mode"] == "r3" and row["reply_id"] not in authorized_r3_reply_ids
+        for row in outbound_rows
+    )
     invariants = {
         "lost_raw_events": len(replay.events) - raw_count,
         "missing_question_routes": len(replay.events) - len(question_rows),
@@ -702,7 +743,7 @@ def _pressure_report(
         "incomplete_traces": trace_summary["incomplete_count"],
         "trace_stage_drift": trace_summary["stage_drift_count"],
         "oracle_label_in_model_input": int(runner.oracle_label_in_model_input),
-        "unauthorized_r3_writes": r3_count,
+        "unauthorized_r3_writes": unauthorized_r3_writes,
         "cross_tenant_evidence_leakage": cross_tenant_leakage,
         "unreceipted_writes": unreceipted_writes,
         "duplicate_canonical_writes": duplicate_canonical_writes,

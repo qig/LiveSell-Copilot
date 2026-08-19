@@ -363,6 +363,15 @@ Each entry must identify the proposal, disposition, reason, chosen alternative, 
 - **Implication:** APR-034's rejection of a general workflow engine, user-authored registry, plugin mechanism, and dynamic agent mutation remains in force. Runtime selection resolves only prebuilt immutable handles and never edits prompts, schemas, tools, credentials, templates, or effect authority. Debug-selected runs may exercise normal R2 and broker-authorized R3 behavior, but the same freshness, uniqueness, receipt, and kill-switch checks apply. The extension is `Accepted`, not yet `Implemented` or `Measured`.
 - **Evidence:** Builder design conversation, 2026-08-18.
 
+### APR-040 — Keep automatic replies opt-in, category-allowlisted, and text duplicates grouped for the full listing epoch
+
+- **Disposition:** Explicitly superseded.
+- **Decision source:** Builder UI testing and explicit product correction on 2026-08-18.
+- **Reason:** Default-off automation made ordinary grounded questions appear stuck in the Copilot Inbox; the five-category question-wording allowlist silently downgraded valid Python-resolved facts such as `US 9`, condition, research, and aggregate availability; lifetime normalization treated a genuinely repeated question ten seconds later as the original duplicate. Previous-listing questions also required seller composition even though the application can safely state that a different item is now on stage.
+- **Chosen alternative:** Expose default-on **Auto-message** and **Manual review** modes in the seller UI without R2/R3 labels. Auto-message sends every current single-fact reply only after the existing deterministic scope, freshness, evidence, claim, tone, uniqueness, and final-version checks; unresolved cases remain in Manual review or `needs_seller`. Group normalization-equivalent text for five seconds while preserving indefinite event-ID idempotency. Build previous-listing transition notices deterministically with zero model calls and send or hold them according to the selected mode.
+- **Implication:** Internal R2/R3 database and receipt names remain compatibility details. Automatic rendering expands across the registered trusted fact set without expanding model authority or marketplace-write authority. The pressure/safety oracle must treat broker-authorized replies as authorized rather than assuming all automatic writes are violations.
+- **Evidence:** Builder-observed seller-workspace defects and explicit decisions, 2026-08-18; dirty-tree design `docs/plans/2026-08-18-auto-message-routing-design.md`.
+
 ## Entry template
 
 ```md

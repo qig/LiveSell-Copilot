@@ -37,8 +37,8 @@ def test_evaluator_reports_every_named_safety_outcome() -> None:
     }
 
     assert outcomes == {
-        "r3_off": ("review", "review"),
-        "disallowed_category": ("review", "review"),
+        "manual_review": ("review", "review"),
+        "broker_approved_condition": ("auto_send", "auto_send"),
         "fabricated_evidence": ("needs_seller", "needs_seller"),
         "prompt_injection": ("no_auto_send", "no_auto_send"),
         "cross_tenant": ("needs_seller", "needs_seller"),

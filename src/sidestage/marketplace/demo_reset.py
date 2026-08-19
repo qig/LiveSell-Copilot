@@ -199,7 +199,7 @@ class DemoResetService:
             )
             connection.execute(
                 """UPDATE copilot_r3_capabilities
-                   SET enabled = 0, version = version + 1,
+                   SET enabled = 1, version = version + 1,
                        updated_by = ?, updated_at = ?
                    WHERE show_id = ? AND seller_id = ?""",
                 (authority.actor_id, reset_at, authority.show_id, authority.seller_id),

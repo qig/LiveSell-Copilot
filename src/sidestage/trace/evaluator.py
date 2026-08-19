@@ -245,7 +245,16 @@ def _run_case(case: dict, *, case_index: int, seed: int, database_path: Path) ->
         )
         if push.json()["receipt"]["status"] != "applied":
             raise EvaluationError(f"seed={seed} case={case['case_id']}: setup push failed")
-        if case["case_id"] != "r3_off":
+        if case["case_id"] == "manual_review":
+            disabled = client.post(
+                f"/api/sessions/{token}/copilot/r3",
+                json={"enabled": False, "expected_version": 1},
+            )
+            if disabled.status_code != 200:
+                raise EvaluationError(
+                    f"seed={seed} case={case['case_id']}: Manual review enable failed"
+                )
+        else:
             enabled = client.post(
                 f"/api/sessions/{token}/copilot/r3",
                 json={"enabled": True, "expected_version": 1},
@@ -295,7 +304,7 @@ def _run_case(case: dict, *, case_index: int, seed: int, database_path: Path) ->
     ]
     trace_complete = len(traces) == expected_raw and all(item["complete"] for item in traces)
     auto_count = sum(row["mode"] == "r3" for row in outbound)
-    authorized_expected = case["injection"] == "normalized_duplicate"
+    authorized_expected = case["injection"] in {"condition", "normalized_duplicate"}
     unauthorized = max(0, auto_count - (1 if authorized_expected else 0))
     duplicate_writes = max(0, auto_count - 1)
     silent_retarget = 0

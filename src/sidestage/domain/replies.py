@@ -300,13 +300,7 @@ class AbstainIntent(FrozenReplyContract):
 
 class R3ValidatedFact(FrozenReplyContract):
     evidence_id: EvidenceId
-    fact_type: Literal[
-        FactType.CURRENT_PRICE,
-        FactType.VARIANT_AVAILABILITY,
-        FactType.SHIPPING_POLICY,
-        FactType.PAYMENT_POLICY,
-        FactType.RETURNS_POLICY,
-    ]
+    fact_type: FactType
     value: NonEmptyText
     source_ref: NonEmptyText
     source_version: Annotated[int, Field(strict=True, gt=0)]
@@ -319,13 +313,7 @@ class R3Authorization(FrozenReplyContract):
     listing_id: EntityId
     sku: NonEmptyText
     epoch_id: EntityId
-    answer_category: Literal[
-        AnswerCategory.PRICE,
-        AnswerCategory.AVAILABILITY,
-        AnswerCategory.SHIPPING,
-        AnswerCategory.PAYMENT,
-        AnswerCategory.RETURNS,
-    ]
+    answer_category: AnswerCategory
     fact: R3ValidatedFact
 
 

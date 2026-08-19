@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 >
-> Status: `Accepted`; Milestone 2 is `Verified` at `734d151`; deterministic M3B.1-M3B.4 behavior is `Verified` at `7d6c349` and `6ba208a`; the original M3B.5 is `Verified` at `39885e4`; latency/DBG-023 work is committed at `12f3bab` but awaits clean final verification, the reset/UI extension is `Implemented` but uncommitted, and the final live release gate remains open. This document does not authorize staging or commits by itself.
+> Status: `Accepted`; Milestone 2 is `Verified` at `734d151`; deterministic M3B.1-M3B.4 behavior is `Verified` at `7d6c349` and `6ba208a`; the original M3B.5 is `Verified` at `39885e4`; latency/DBG-023 work is committed at `12f3bab` but awaits clean final verification, the reset/UI extension is committed at `b5823cc`, and the Auto-message/routing corrections are dirty-tree `Implemented`. The final live release gate remains open. This document does not authorize staging or commits by itself.
 
 **Goal:** Build and verify the SideStage v1 synthetic livesell emulator, reusable static single-step agent core, and bounded reply copilot through small, testable sub-milestones, each independently reviewed and committed with a builder-approved message.
 
@@ -752,11 +752,11 @@ M3A completion permits M3B to consume the reviewed public core API and register 
    - Reject arbitrary prior chat, customer memory, credentials, R3 state, write identities, foreign evidence, and invalid transitions.
    - Require `asked_at` plus every `state_changed_at`; inject trusted `accepted_at` rather than reading it from fixtures/model output.
 2. Routing and scheduling:
-   - Event-ID and normalization-equivalent duplicates group only within seller/show/bound listing epoch.
+   - Event-ID replay stays indefinitely idempotent; normalization-equivalent text groups only inside a five-second seller/show/bound-listing-epoch window.
    - Semantic paraphrases are not silently suppressed in v1; they proceed as independent candidates.
    - Emoji-only and allowlisted standalone greetings bypass model work; mixed greeting/questions proceed.
    - Questions on opposite sides of Swap remain distinct.
-   - Previous-listing questions show previous SKU, enter `needs_seller`, and never invoke retrieval/model.
+   - Previous-listing questions show the previous SKU and never invoke a model. Application code builds the current-stage notice; Auto-message sends it and Manual review holds it.
    - The M3A FIFO dispatch preserves correct livesell attribution while delayed work completes out of order.
    - Configure both static profiles for capacity 64/show, five workers/show, fifteen global, and the propagated five-second timeout; a full queue preserves raw input and starts no registered-agent provider call. Only the baseline may already have completed its bounded analysis call. The five/fifteen setting supersedes the original four/twelve value after the recorded 72-call benchmark.
 3. Retrieval and context:
@@ -852,13 +852,15 @@ uv run pytest tests/integration/test_live_app_factory.py::test_live_app_factory_
 **RED test groups**
 
 1. Capability UI:
-   - R3 is default-off.
-   - Authenticated enable shows a persistent warning.
-   - Disable is immediate and no new auto-send occurs after acknowledgement.
-2. Allowlist and rendering:
-   - Auto-send only current price, exact variant availability, and exact-match shipping/payment/return policy.
-   - Render from verified typed claims and bounded tone variants; never send unrestricted model prose.
-   - Research, condition, authenticity, sizing, negotiation, markdown, order issues, ambiguity, and previous listings never auto-send.
+   - Auto-message is the default for new/reset demo shows; the seller UI never displays R2/R3 labels.
+   - The persistent warning explains that fully grounded replies send and judgment cases remain for Manual review.
+   - Switching to Manual review is immediate and no new automatic send occurs after acknowledgement.
+2. Broker-approved rendering:
+   - Auto-send every current supported single-fact reply only after deterministic scope, freshness, evidence, claim, tone, and category validation.
+   - Render from verified typed records and bounded tone variants; never send unrestricted model prose.
+   - Price, exact/aggregate availability, policy, listing identity, research, condition, authenticity, and sizing use the same broker/final gateway. Negotiation, markdown, order issues, ambiguity, missing/conflicting evidence, and stale state never auto-send.
+   - A fully typed absent catalog size becomes one revalidated negative availability record. No workflow sends the full variant inventory to a model.
+   - A pre-generation previous-listing question uses a zero-model deterministic current-stage notice; an in-flight listing change still fails closed.
 3. Final races and atomicity:
    - Recheck capability version, active epoch/SKU, price, referenced stock, and policy immediately before write.
    - In-flight Swap produces `needs_seller(previous_listing)`, shows previous SKU, and exposes no draft.
@@ -874,7 +876,7 @@ uv run pytest tests/integration/test_r3_safety.py tests/e2e/test_r3_controls.py 
 
 **Pass gate:** The fixed agentic-write matrix records zero direct, unauthorized, ungrounded, stale, duplicate, or unreceipted automatic sends, and the kill switch is visibly testable.
 
-**Review evidence:** R3 controls/warning capture, one valid auto-reply, one disallowed hold, disable/Swap/version-race traces, atomic database evidence, and tests.
+**Review evidence:** Auto-message/Manual review controls, default/reset warning capture, valid automatic replies across the fact registry, unresolved holds, exact-absence and previous-listing notices, disable/Swap/version-race traces, atomic database evidence, and tests.
 
 ## M3B.4 — Developer tracer and deterministic scripted livesell safety evaluator
 
@@ -912,7 +914,7 @@ uv run pytest tests/integration/test_r3_safety.py tests/e2e/test_r3_controls.py 
 - Keep noise, duplicate, previous-listing, capacity, and timeout outcomes inspectable.
 - Prove oracle labels never enter retrieval, prompt, or model-visible trace input.
 - Prove filters return only selected actual outcomes.
-- Run fixed scripted cases for R3 off, disallowed category, fabricated evidence, injection, cross-tenant request, disable race, Swap race, state-version race, malformed tool call, and duplicate intent.
+- Run fixed scripted cases for Manual review, a broker-approved nonlegacy category, fabricated evidence, injection, cross-tenant request, disable race, Swap race, state-version race, malformed tool call, and duplicate intent.
 - Route every registered-agent decision through the reviewed M3A core and scripted `ModelRunner`; the baseline may inject its separate analysis outcome, while the challenger must make exactly one total model request. The evaluator may not bypass or reimplement the core contract or synthesize debugger success states.
 - Replay the identical generated event stream through both strategies, record distinct strategy/profile digests and provider-call counts, and preserve the same routing, safety, latency, and oracle denominators.
 - A deliberately injected invariant violation exits nonzero with seed and trace ID; it remains regression evidence, not a fabricated debugging incident.
@@ -992,7 +994,7 @@ uv run python -m sidestage.trace.evaluator --scenario fixtures/scenarios/safety_
    - Prove a switch event and later response cannot let an older SSE snapshot overwrite the current marketplace badge.
 10. Developer reset and high-volume seller-workspace operability:
    - Require an active immutable listing epoch before either prepared or custom buyer chat can enter routing; reject an empty stage with typed `active_slot_empty` before provider work and mirror that state with disabled UI controls.
-   - Add a session-authoritative **Reset demo** control that waits for admitted mutable work, restores fixture-visible seller/show state transactionally, advances internal versions, clears chat/Copilot/reply/trace/metric/action history, disables R3, restores the startup runtime selection, resets the prepared stream, and publishes one reset SSE event. It is debugger/demo tooling, not a sixth marketplace action or model effect.
+   - Add a session-authoritative **Reset demo** control that waits for admitted mutable work, restores fixture-visible seller/show state transactionally, advances internal versions, clears chat/Copilot/reply/trace/metric/action history, restores default Auto-message, restores the startup runtime selection, resets the prepared stream, and publishes one reset SSE event. It is debugger/demo tooling, not a sixth marketplace action or model effect.
    - Order open Inbox questions newest-first. Keep full cards in independently scrolling **Now** for twenty seconds; move unresolved older questions into independently scrolling compact **Earlier** rows with explicit in-place expansion. The browser timer changes presentation only.
    - Project the authoritative buyer/seller chat timeline from persisted stream order. Every R2 edit/accept/manual reply and R3 auto-reply quotes its exact source buyer message; answered questions leave the open panels and dismiss creates no timeline entry.
    - Constrain the desktop seller workspace to viewport-height chat and Inbox regions so volume does not force whole-page scrolling; preserve reader position unless already near the newest edge.
@@ -1008,15 +1010,15 @@ uv run --env-file .env python -m sidestage.trace.evaluator --scenario fixtures/s
 
 **Implementation review gate:** Both workflow/model selectors expose only startup-approved compatible values; per-show switches are atomic and session-only; in-flight work remains pinned; full R2/R3 behavior retains the same broker authority; marketplace/debugger projections converge; and cold, steady-state, and combined metrics are separated without changing the release denominator. M3B.5 is `Verified` at commit `39885e4`: `uv run pytest -q` passed with `300 passed, 5 deselected in 52.29s`. This does not by itself close the M3B.6 live release gate.
 
-**Current gate evidence:** The commit-bound suite at `39885e4` includes localhost Playwright/server checks, seller-visible convergence to the exact switched profile name/version, and a delayed seller-session regression proving old-show controls are inert until the new snapshot arrives. It covers Luna standard `none`, Luna standard `low`, Luna priority `none`, Gemini 3.7 Flash `low`, and Gemini 3.5 Flash-Lite `minimal`; transport tests distinguish direct-OpenAI `service_tier` from OpenRouter reasoning. The v2 workload retains explicit semantic contracts and separate all-event, answerable-parent, model-backed, R2, and R3 latency denominators. Commit `12f3bab` contains the follow-up closed scope gates and DBG-023 resolver: exactly 72 answerable parents enter `one_call_template`, model projection omits non-semantic authority/provenance metadata, typed Python resolution maps natural-language sizes to one trusted bound-listing variant for both workflows, exact availability projects one record, general availability projects one aggregate rather than the full variant array, and scheduler limits are five/show and fifteen/global. The uncommitted seller-workspace reset/operability extension makes empty-stage chat fail before provider work, reset exclusive and transactional, and open questions/timeline entries use the approved viewport-bounded presentation. The combined dirty-tree command `uv run pytest -q` passes with `356 passed, 5 deselected in 73.51s`; this is not commit-bound `Verified` evidence. A live same-show diagnostic passed one-call colloquial size resolution through all eight stages, switched to the two-call branch, and observed quoted R2 and R3 replies, but did not run the fixed pressure workload and is not `Measured`. The earlier exploratory artifact `runs/exploratory/openrouter_gemini_3_5_flash_lite_minimal_evidence_variant_c5_one_call_v2.json` passed with 72/72 semantic correctness, 14/14 exact variants, all hard invariants zero, zero SLO misses/timeouts, 976.73 ms queue p95, and 1,848.92 ms answerable-parent p95. Because the artifact predates `12f3bab` and identifies `39885e4`, it remains diagnostic only.
+**Current gate evidence:** The commit-bound suite at `39885e4` includes localhost Playwright/server checks, seller-visible convergence to the exact switched profile name/version, and a delayed seller-session regression proving old-show controls are inert until the new snapshot arrives. It covers Luna standard `none`, Luna standard `low`, Luna priority `none`, Gemini 3.7 Flash `low`, and Gemini 3.5 Flash-Lite `minimal`; transport tests distinguish direct-OpenAI `service_tier` from OpenRouter reasoning. The v2 workload retains explicit semantic contracts and separate all-event, answerable-parent, model-backed, R2, and R3 latency denominators. Commit `12f3bab` contains the follow-up closed scope gates and DBG-023 resolver: exactly 72 answerable parents enter `one_call_template`, model projection omits non-semantic authority/provenance metadata, typed Python resolution maps natural-language sizes to one trusted bound-listing variant for both workflows, exact availability projects one record, general availability projects one aggregate rather than the full variant array, and scheduler limits are five/show and fifteen/global. Commit `b5823cc` adds the seller-workspace reset/operability extension: empty-stage chat fails before provider work, reset is exclusive and transactional, and open questions/timeline entries use the approved viewport-bounded presentation. The first clean run then found DBG-025/DBG-026. Their dirty-tree fixes pass the full suite on both the reused and clean interpreters with `357 passed, 5 deselected`, but are not commit-bound final evidence. The later dirty-tree Auto-message/routing correction makes automatic mode the default, broadens it only after the same one-fact broker validation, adds revalidated exact-size absence, bounds text grouping to five seconds, and adds the zero-model previous-listing notice. The same pass exposes only **Auto-message** and **Manual review** in the seller UI. A subsequent full-suite failure exposed a Python 3.9 SSE condition-lock race; the event-based wakeup correction and a same-show fan-out regression now pass the complete dirty-tree suite with `368 passed, 5 deselected` on both Python 3.9 and Python 3.13/FastAPI 0.141.1. These corrections are `Implemented`, not commit-bound `Verified`. A live same-show diagnostic passed one-call colloquial size resolution through all eight stages, switched to the two-call branch, and observed quoted manual and automatic replies, but did not run the fixed pressure workload and is not `Measured`. The earlier exploratory artifact `runs/exploratory/openrouter_gemini_3_5_flash_lite_minimal_evidence_variant_c5_one_call_v2.json` passed with 72/72 semantic correctness, 14/14 exact variants, all hard invariants zero, zero SLO misses/timeouts, 976.73 ms queue p95, and 1,848.92 ms answerable-parent p95. Because the artifact predates `12f3bab` and identifies `39885e4`, it remains diagnostic only.
 
-**Mandatory post-commit run:** The full deterministic suite must be rerun after the M3B.5 implementation commit before changing its status to `Verified`. Live pressure must still be rerun against a passing committed configuration; write final raw evidence beneath `runs/final_evaluation/` with that implementation commit hash. Do not edit or commit the final evidence until M3B.6 review.
+**Mandatory post-commit run:** The full deterministic suite must be rerun from a clean worktree after the DBG-025/DBG-026 fix commit before M3B.6 changes status. Live pressure must then be rerun against that same passing committed configuration; write final raw evidence beneath `runs/final_evaluation/` with its implementation commit hash. Do not edit or commit the final evidence until M3B.6 review.
 
 **Review evidence:** [M3 pressure metrics report](../evidence/m3-pressure-metrics-report.md), preliminary live artifacts with explicit mode/model, stage breakdown, queue/worker statistics, golden-demo capture including custom research, and tests.
 
 ## M3B.6 — Committed-tree verification, evidence, and submission handoff
 
-> Status: M3B.5 is `Verified` at `39885e4` with `300 passed, 5 deselected in 52.29s`; latency/DBG-023 implementation is committed at `12f3bab`. The reset/UI extension remains `Implemented` but uncommitted. Final evidence is blocked until the extension receives a builder-approved commit and the resulting clean committed tree is rerun; the older Gemini Flash-Lite diagnostic predates `12f3bab` and cannot close the gate.
+> Status: M3B.5 is `Verified` at `39885e4`; latency/DBG-023 is committed at `12f3bab`, and reset/UI is committed at `b5823cc`. The first clean run from `b5823cc` exposed the FastAPI lifecycle compatibility defect DBG-025 and interpreter-dependent scripted saturation defect DBG-026, so M3B.6 correctly returned to a separate implementation sub-milestone. The later builder-approved Auto-message/routing correction and DBG-028 SSE wakeup correction are also dirty-tree `Implemented`. The combined full suites pass on the reused Python 3.9 and clean Python 3.13/FastAPI 0.141.1 environments (`368 passed, 5 deselected` each), but final evidence remains blocked until the fixes receive a builder-approved commit and the resulting clean committed tree is rerun. The older Gemini Flash-Lite diagnostic predates `12f3bab` and cannot close the gate.
 
 **Files**
 
@@ -1024,7 +1026,7 @@ uv run --env-file .env python -m sidestage.trace.evaluator --scenario fixtures/s
 - Update: `README.md`, `docs/PRD.md`, `docs/TDD.md`, `docs/debug-process.md`, and submission/access notes.
 - Do not change product behavior in this evidence-only sub-milestone.
 
-**Verification sequence against the committed M3B.5 tree**
+**Verification sequence against the final committed implementation tree**
 
 ```bash
 uv sync --group dev
@@ -1047,7 +1049,7 @@ Run the server and evaluator in separate terminals. Record the exact final comma
 - Real-model answerable-parent p95 below two seconds at the approved acceptance-to-publication backend boundary; all-event, model-backed, R2-published, and R3-committed distributions remain separately visible.
 - Report p50, p95, maximum, SLO misses, hard timeouts, queue depth, and queue wait.
 
-**Pass gate:** Evidence identifies `evaluation_scope=sidestage_e2e`, `evaluation_mode=live`, pinned model, seed, fixture digest, M3A profile digest, configuration, and M3B.5 implementation commit. Clean run/test/evaluation commands succeed. Documentation reports only observed results and keeps GMV/operator-load explicitly unmeasured.
+**Pass gate:** Evidence identifies `evaluation_scope=sidestage_e2e`, `evaluation_mode=live`, pinned model, seed, fixture digest, M3A profile digest, configuration, and final implementation commit. Clean run/test/evaluation commands succeed. Documentation reports only observed results and keeps GMV/operator-load explicitly unmeasured.
 
 If verification finds a behavior defect, do not hide a code fix inside M3B.6. Return to a separately reviewed implementation sub-milestone, obtain an approved commit message, then rerun verification on the new commit.
 

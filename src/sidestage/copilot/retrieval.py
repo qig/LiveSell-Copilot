@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 import re
 from typing import Annotated, Callable, Optional, Sequence, Tuple, Union
@@ -24,6 +25,8 @@ from sidestage.storage.database import MarketplaceDatabase
 from sidestage.storage.repositories import _evidence_id
 from sidestage.copilot.routing import explicit_product_matches
 from sidestage.copilot.variants import (
+    Audience,
+    SizeSystem,
     TrustedVariantCandidate,
     VariantResolution,
     VariantResolutionStatus,
@@ -269,6 +272,16 @@ class EvidenceRetriever:
                 if isinstance(stock, RetrievalResult):
                     return stock
                 records.append(stock)
+            elif resolution.status is VariantResolutionStatus.ABSENT:
+                stock = self._absent_stock_record(
+                    connection,
+                    context,
+                    resolution,
+                    show_seq=int(show["show_seq"]),
+                )
+                if isinstance(stock, RetrievalResult):
+                    return stock
+                records.append(stock)
             elif resolution.status is VariantResolutionStatus.SUMMARY:
                 summary = self._availability_summary_record(
                     connection,
@@ -337,13 +350,21 @@ class EvidenceRetriever:
                             "listing price version changed after retrieval",
                         )
                 if record.fact_type is FactType.VARIANT_AVAILABILITY:
-                    variant_id = record.source_ref.rsplit("/", 1)[-1]
-                    row = connection.execute(
-                        """SELECT version FROM inventory
-                           WHERE seller_id = ? AND listing_id = ? AND variant_id = ?""",
-                        (snapshot.seller_id, snapshot.listing_id, variant_id),
-                    ).fetchone()
-                    if row is None or int(row["version"]) != record.source_version:
+                    if record.source_ref.startswith("sqlite:inventory_absence/"):
+                        current = self._revalidate_absence_record(
+                            connection,
+                            snapshot,
+                            record,
+                        )
+                    else:
+                        variant_id = record.source_ref.rsplit("/", 1)[-1]
+                        row = connection.execute(
+                            """SELECT version FROM inventory
+                               WHERE seller_id = ? AND listing_id = ? AND variant_id = ?""",
+                            (snapshot.seller_id, snapshot.listing_id, variant_id),
+                        ).fetchone()
+                        current = row is not None and int(row["version"]) == record.source_version
+                    if not current:
                         return self._failure(
                             RetrievalFailureCode.STALE_EVIDENCE,
                             "inventory version changed after retrieval",
@@ -497,6 +518,22 @@ class EvidenceRetriever:
         resolution = self._variant_resolution(context)
         if resolution.status is VariantResolutionStatus.EXACT:
             return self._exact_stock_record(connection, context, resolution.candidate)
+        if resolution.status is VariantResolutionStatus.ABSENT:
+            show = connection.execute(
+                "SELECT show_seq FROM shows WHERE seller_id = ? AND show_id = ?",
+                (context.seller_id, context.show_id),
+            ).fetchone()
+            if show is None:
+                return self._failure(
+                    RetrievalFailureCode.WRONG_SKU,
+                    "show is not in the trusted tenant scope",
+                )
+            return self._absent_stock_record(
+                connection,
+                context,
+                resolution,
+                show_seq=int(show["show_seq"]),
+            )
         if resolution.status is VariantResolutionStatus.SUMMARY:
             show = connection.execute(
                 "SELECT show_seq FROM shows WHERE seller_id = ? AND show_id = ?",
@@ -586,6 +623,103 @@ class EvidenceRetriever:
             provenance="synthetic_seller_data",
         )
 
+    def _absent_stock_record(
+        self,
+        connection,
+        context: Union[RetrievalContext, TemplateRetrievalContext],
+        resolution: VariantResolution,
+        *,
+        show_seq: int,
+    ) -> EvidenceRecord | RetrievalResult:
+        if (
+            resolution.size_system is None
+            or resolution.audience is None
+            or resolution.size is None
+        ):
+            return self._failure(
+                RetrievalFailureCode.MISSING_EVIDENCE,
+                "absent variant attributes are incomplete",
+            )
+        completeness = self._availability_summary_value(
+            connection,
+            seller_id=context.seller_id,
+            listing_id=context.bound_listing.listing_id,
+        )
+        if isinstance(completeness, RetrievalResult):
+            return completeness
+        label = _variant_label(
+            resolution.size_system,
+            resolution.audience,
+            resolution.size,
+        )
+        source_key = (
+            f"{resolution.size_system.value}/{resolution.audience.value}/"
+            f"{_decimal_text(resolution.size)}"
+        )
+        return EvidenceRecord(
+            evidence_id=_evidence_id(
+                context.seller_id,
+                context.bound_listing.listing_id,
+                f"variant_absence:{source_key}",
+            ),
+            seller_id=context.seller_id,
+            listing_id=context.bound_listing.listing_id,
+            fact_type=FactType.VARIANT_AVAILABILITY,
+            value=f"{label}: 0 available",
+            source=EvidenceSource.MARKETPLACE_STATE,
+            source_ref=f"sqlite:inventory_absence/{source_key}",
+            source_version=show_seq,
+            observed_at=context.observed_at,
+            provenance="synthetic_seller_data",
+        )
+
+    def _revalidate_absence_record(
+        self,
+        connection,
+        snapshot: EvidenceSnapshot,
+        record: EvidenceRecord,
+    ) -> bool:
+        try:
+            encoded = record.source_ref.removeprefix("sqlite:inventory_absence/")
+            system_text, audience_text, size_text = encoded.split("/")
+            system = SizeSystem(system_text)
+            audience = Audience(audience_text)
+            size = Decimal(size_text)
+        except (ValueError, InvalidOperation):
+            return False
+        show = connection.execute(
+            "SELECT show_seq FROM shows WHERE seller_id = ? AND show_id = ?",
+            (snapshot.seller_id, snapshot.show_id),
+        ).fetchone()
+        if show is None or int(show["show_seq"]) != record.source_version:
+            return False
+        completeness = self._availability_summary_value(
+            connection,
+            seller_id=snapshot.seller_id,
+            listing_id=snapshot.listing_id,
+        )
+        if isinstance(completeness, RetrievalResult):
+            return False
+        product = next(
+            (
+                product
+                for product in self.catalog.seller(snapshot.seller_id).products
+                if product.listing.listing_id == snapshot.listing_id
+            ),
+            None,
+        )
+        if product is None:
+            return False
+        candidates = self._trusted_candidates(product.variants)
+        if any(
+            candidate.size_system is system
+            and candidate.audience is audience
+            and candidate.size == size
+            for candidate in candidates
+        ):
+            return False
+        return record.value == f"{_variant_label(system, audience, size)}: 0 available"
+
     def _availability_summary_value(
         self,
         connection,
@@ -672,3 +806,16 @@ class EvidenceRetriever:
 def _parse_utc(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     return _require_utc(parsed, field_name="observed_at")
+
+
+def _decimal_text(value: Decimal) -> str:
+    return format(value, "f")
+
+
+def _variant_label(system: SizeSystem, audience: Audience, size: Decimal) -> str:
+    audience_label = {
+        Audience.MEN: "M",
+        Audience.WOMEN: "W",
+        Audience.YOUTH: "Y",
+    }[audience]
+    return f"{system.value} {audience_label} {_decimal_text(size)}"

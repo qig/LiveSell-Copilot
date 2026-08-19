@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
-from datetime import datetime, timezone
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -9,6 +11,10 @@ from fastapi.testclient import TestClient
 
 from sidestage.agent_core import ModelResponse, ModelTerminalCall
 from sidestage.app import create_app
+from sidestage.copilot.pipeline import (
+    RawCustomerReplyEvent,
+    process_customer_reply,
+)
 from sidestage.marketplace.service import PriceMarkdownRequest, SwapRequest
 
 
@@ -122,7 +128,23 @@ def _ask(client: TestClient, token: str, question: str) -> dict:
     return response.json()
 
 
-def test_r3_is_default_off_and_every_authenticated_change_is_versioned(tmp_path: Path) -> None:
+class _ExistingEventIngestor:
+    def __init__(self, event) -> None:
+        self.event = event
+
+    def ingest(self, *_args, **_kwargs):
+        return self.event
+
+
+class _MutableWallClock:
+    def __init__(self, value: datetime) -> None:
+        self.value = value
+
+    def __call__(self) -> datetime:
+        return self.value
+
+
+def test_auto_message_is_default_on_and_every_authenticated_change_is_versioned(tmp_path: Path) -> None:
     app = create_app(
         database_path=tmp_path / "capability.sqlite3",
         wall_clock=lambda: FIXED_TIME,
@@ -130,24 +152,20 @@ def test_r3_is_default_off_and_every_authenticated_change_is_versioned(tmp_path:
     )
     with TestClient(app) as client:
         token, snapshot = _session(client)
-        assert snapshot["r3_capability"]["enabled"] is False
+        assert snapshot["r3_capability"]["enabled"] is True
         assert snapshot["r3_capability"]["version"] == 1
-
-        enabled = _enable(client, token)
-        assert enabled["capability"]["enabled"] is True
-        assert enabled["capability"]["version"] == 2
 
         disabled = client.post(
             f"/api/sessions/{token}/copilot/r3",
-            json={"enabled": False, "expected_version": 2},
+            json={"enabled": False, "expected_version": 1},
         )
         assert disabled.status_code == 200
         assert disabled.json()["capability"]["enabled"] is False
-        assert disabled.json()["capability"]["version"] == 3
+        assert disabled.json()["capability"]["version"] == 2
 
         stale = client.post(
             f"/api/sessions/{token}/copilot/r3",
-            json={"enabled": True, "expected_version": 2},
+            json={"enabled": True, "expected_version": 1},
         )
         assert stale.status_code == 409
         assert stale.json()["detail"] == "stale R3 capability version"
@@ -202,7 +220,13 @@ def test_enabled_r3_renders_price_from_fact_and_commits_one_atomic_receipt(
 @pytest.mark.parametrize(
     ("question", "expected_text", "version_field"),
     [
+        ("Is US 9 available?", "Yes — US M 9 is available (2 left).", "inventory_version"),
         ("Is US M 9 available?", "Yes — US M 9 is available (2 left).", "inventory_version"),
+        (
+            "Is US M 6.5 available?",
+            "US M 6.5 is sold out.",
+            "inventory_summary_version",
+        ),
         (
             "What is your shipping policy?",
             "Orders ship within two business days by tracked standard delivery.",
@@ -228,10 +252,14 @@ def test_exact_variant_and_exact_policy_are_the_other_bounded_r3_paths(
         snapshot = _ask(client, token, question)["snapshot"]
 
     assert snapshot["outbound_replies"][0]["reply_text"] == expected_text
-    assert snapshot["reply_receipts"][0]["validated_versions"][version_field] == 1
+    validated_version = snapshot["reply_receipts"][0]["validated_versions"][version_field]
+    if version_field == "inventory_summary_version":
+        assert validated_version > 0
+    else:
+        assert validated_version == 1
 
 
-def test_non_allowlisted_condition_remains_r2_review_when_r3_is_enabled(tmp_path: Path) -> None:
+def test_broker_approved_condition_auto_sends_when_auto_message_is_enabled(tmp_path: Path) -> None:
     app = create_app(
         database_path=tmp_path / "r3-condition.sqlite3",
         wall_clock=lambda: FIXED_TIME,
@@ -243,9 +271,91 @@ def test_non_allowlisted_condition_remains_r2_review_when_r3_is_enabled(tmp_path
         _enable(client, token)
         response = _ask(client, token, "What condition is this pair in?")
 
-    assert response["pipeline_results"][0]["broker_decision"]["outcome"] == "review"
-    assert response["snapshot"]["copilot_questions"][0]["state"] == "awaiting_review"
-    assert response["snapshot"]["outbound_replies"] == []
+    assert response["pipeline_results"][0]["broker_decision"]["outcome"] == "auto_send"
+    assert response["snapshot"]["copilot_questions"][0]["state"] == "auto_answered"
+    assert response["snapshot"]["outbound_replies"][0]["reply_text"] == (
+        "Factory-new and unworn"
+    )
+
+
+@pytest.mark.parametrize(
+    ("auto_message", "expected_state"),
+    ((True, "auto_answered"), (False, "awaiting_review")),
+)
+def test_previous_listing_notice_skips_models_and_respects_reply_mode(
+    tmp_path: Path,
+    auto_message: bool,
+    expected_state: str,
+) -> None:
+    runner = R3ScenarioRunner()
+    app = create_app(
+        database_path=tmp_path / f"previous-listing-{auto_message}.sqlite3",
+        wall_clock=lambda: FIXED_TIME,
+        model_runner=runner,
+    )
+    with TestClient(app) as client:
+        token, session_snapshot = _session(client)
+        _push(client, token)
+        if not auto_message:
+            disabled = client.post(
+                f"/api/sessions/{token}/copilot/r3",
+                json={
+                    "enabled": False,
+                    "expected_version": session_snapshot["r3_capability"]["version"],
+                },
+            )
+            assert disabled.status_code == 200
+        authority = app.state.sessions.require(token).authority
+        old_event = app.state.ingestor.ingest(
+            authority,
+            customer_display_name="tester",
+            raw_text="Do you still have the Aero Dash?",
+            input_origin="custom",
+        )
+        swapped = client.post(
+            f"/api/sessions/{token}/actions/swap",
+            json={
+                "target_listing_id": COURT,
+                "expected_active_listing_id": AERO,
+                "expected_show_version": 2,
+            },
+            headers={"Idempotency-Key": f"previous-listing-{auto_message}"},
+        )
+        assert swapped.json()["receipt"]["status"] == "applied"
+        services = replace(
+            app.state.pipeline_services,
+            ingestor=_ExistingEventIngestor(old_event),
+        )
+        result = asyncio.run(
+            process_customer_reply(
+                RawCustomerReplyEvent(
+                    authority=authority,
+                    customer_display_name="tester",
+                    raw_text=old_event.raw_text,
+                    input_origin="custom",
+                ),
+                services,
+            )
+        )
+        snapshot = client.get(f"/api/sessions/{token}/snapshot").json()
+
+    card = next(
+        item
+        for item in snapshot["copilot_questions"]
+        if item["question_id"] == result.question_id
+    )
+    assert runner.calls == []
+    assert result.status.value == "completed"
+    assert result.broker_decision.reply_text == (
+        "We're showing Court Pulse Sunset Clay right now—the item you asked about is no longer on stage."
+    )
+    assert card["state"] == expected_state
+    assert card["previous_sku"] == "VK-AD-RC-001"
+    if auto_message:
+        assert snapshot["outbound_replies"][-1]["reply_text"] == result.broker_decision.reply_text
+    else:
+        assert snapshot["outbound_replies"] == []
+        assert card["suggestion"]["reply_text"] == result.broker_decision.reply_text
 
 
 @pytest.mark.parametrize("race", ["disable", "price", "swap"])
@@ -385,3 +495,25 @@ def test_normalized_duplicate_cannot_produce_a_second_r3_reply(tmp_path: Path) -
     assert second["pipeline_results"][0]["reason_code"] == "normalization_equivalent_duplicate"
     assert len(second["snapshot"]["outbound_replies"]) == 1
     assert len(second["snapshot"]["reply_receipts"]) == 1
+
+
+def test_same_question_after_ten_seconds_can_receive_a_new_auto_message(
+    tmp_path: Path,
+) -> None:
+    clock = _MutableWallClock(FIXED_TIME)
+    app = create_app(
+        database_path=tmp_path / "r3-repeat-after-window.sqlite3",
+        wall_clock=clock,
+        model_runner=R3ScenarioRunner(),
+    )
+    with TestClient(app) as client:
+        token, _ = _session(client)
+        _push(client, token)
+        first = _ask(client, token, "Is US 9 available?")
+        clock.value += timedelta(seconds=10)
+        second = _ask(client, token, "Is US 9 available?")
+
+    assert first["pipeline_results"][0]["publication"]["state"] == "auto_answered"
+    assert second["pipeline_results"][0]["publication"]["state"] == "auto_answered"
+    assert len(second["snapshot"]["outbound_replies"]) == 2
+    assert len(second["snapshot"]["reply_receipts"]) == 2

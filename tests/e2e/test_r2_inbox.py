@@ -138,7 +138,17 @@ def r2_browser_page() -> Iterator[Page]:
 def _session(client: TestClient) -> tuple[str, dict]:
     response = client.post("/api/demo/sessions", json={"seller_id": SELLER})
     assert response.status_code == 201
-    return response.json()["session_token"], response.json()["snapshot"]
+    token = response.json()["session_token"]
+    snapshot = response.json()["snapshot"]
+    manual = client.post(
+        f"/api/sessions/{token}/copilot/r3",
+        json={
+            "enabled": False,
+            "expected_version": snapshot["r3_capability"]["version"],
+        },
+    )
+    assert manual.status_code == 200
+    return token, manual.json()["snapshot"]
 
 
 def _push(client: TestClient, token: str) -> None:
@@ -408,7 +418,8 @@ def test_browser_inbox_requires_one_visible_seller_decision(
     page.on("pageerror", lambda error: browser_errors.append(str(error)))
 
     page.goto(f"{r2_live_server}/app/")
-    expect(page.get_by_text("Review first", exact=True)).to_be_visible()
+    page.locator("#r3-toggle").click()
+    expect(page.get_by_text("Manual review", exact=True)).to_be_visible()
     page.locator("#empty-push").click()
     expect(page.locator("#operation-dialog")).to_be_visible()
     page.locator("#dialog-confirm").click()

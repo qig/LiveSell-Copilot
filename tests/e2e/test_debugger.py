@@ -112,6 +112,8 @@ def test_debugger_renders_and_filters_real_eight_stage_runtime_traces(
     page.on("request", lambda request: requested_urls.append(request.url))
 
     page.goto(f"{debugger_live_server}/app/")
+    page.locator("#r3-toggle").click()
+    expect(page.locator("#r3-toggle-label")).to_have_text("Manual review")
     page.locator("#empty-push").click()
     page.locator("#dialog-confirm").click()
     expect(page.locator("#operation-dialog")).to_be_hidden()

@@ -91,6 +91,14 @@ def _run_two_call(
     with TestClient(app) as client:
         session = client.post("/api/demo/sessions", json={"seller_id": SELLER}).json()
         token = session["session_token"]
+        manual = client.post(
+            f"/api/sessions/{token}/copilot/r3",
+            json={
+                "enabled": False,
+                "expected_version": session["snapshot"]["r3_capability"]["version"],
+            },
+        )
+        assert manual.status_code == 200
         pushed = client.post(
             f"/api/sessions/{token}/actions/push",
             json={"target_listing_id": LISTING, "expected_show_version": 1},
@@ -147,17 +155,37 @@ def test_two_call_general_availability_uses_one_aggregate_record(tmp_path: Path)
     assert result["broker_decision"]["outcome"] == "review"
 
 
-def test_two_call_unknown_size_stops_before_reply_model(tmp_path: Path) -> None:
+def test_two_call_exact_absent_size_reaches_reply_model(tmp_path: Path) -> None:
     runner = TwoCallAvailabilityRunner()
 
     response = _run_two_call(tmp_path, runner, "Do you have men's US size 11?")
 
     result = response["pipeline_results"][0]
-    assert len(runner.calls) == 1
-    assert result["status"] == "failed"
-    assert result["reason_code"] == "missing_evidence"
-    assert result["publication"]["state"] == "needs_seller"
+    assert len(runner.calls) == 2
+    assert result["status"] == "completed"
+    assert result["broker_decision"]["reply_text"] == "US M 11: 0 available"
+    assert result["publication"]["state"] == "awaiting_review"
     assert response["snapshot"]["outbound_replies"] == []
+
+
+def test_two_call_exact_absent_size_uses_one_python_owned_negative_fact(
+    tmp_path: Path,
+) -> None:
+    runner = TwoCallAvailabilityRunner()
+
+    response = _run_two_call(tmp_path, runner, "Is US M 6.5 available?")
+
+    result = response["pipeline_results"][0]
+    reply_input = runner.calls[1].request.model_input.to_dict()
+    variants = [
+        item for item in reply_input["evidence"]
+        if item["fact_type"] == "variant_availability"
+    ]
+    assert len(runner.calls) == 2
+    assert len(variants) == 1
+    assert variants[0]["value"] == "US M 6.5: 0 available"
+    assert "inventory_absence" in variants[0]["source_ref"]
+    assert result["broker_decision"]["outcome"] in {"review", "auto_send"}
 
 
 def test_two_call_wrong_but_real_variant_claim_fails_semantic_validation(

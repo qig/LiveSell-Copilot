@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import unicodedata
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 from uuid import uuid4
 
@@ -75,6 +76,7 @@ _UNSUPPORTED_PATTERNS = tuple(
         r"\bmatch (?:another|other|a different) seller(?: s)? price\b",
     )
 )
+_DEDUPLICATION_WINDOW = timedelta(seconds=5)
 
 
 class RoutingDecision(BaseModel):
@@ -226,13 +228,20 @@ class CopilotRouter:
                 if bound_listing is not None
                 else f"unbound:{event.event_id}"
             )
+            cutoff = _utc_millis(_parse_utc(event.accepted_at) - _DEDUPLICATION_WINDOW)
             canonical = connection.execute(
                 """SELECT question_id FROM copilot_questions
                    WHERE seller_id = ? AND show_id = ? AND canonical_scope = ?
                      AND canonical_key = ? AND canonical_question_id IS NULL
-                     AND route != 'noise'
-                   ORDER BY question_number LIMIT 1""",
-                (event.seller_id, event.show_id, canonical_scope, canonical_key),
+                     AND route != 'noise' AND asked_at >= ?
+                   ORDER BY question_number DESC LIMIT 1""",
+                (
+                    event.seller_id,
+                    event.show_id,
+                    canonical_scope,
+                    canonical_key,
+                    cutoff,
+                ),
             ).fetchone()
             if canonical is not None:
                 question_id = self.id_factory()
@@ -376,7 +385,7 @@ class CopilotRouter:
                     connection,
                     normalized=normalized,
                     route=ReplyRoute.ELIGIBLE,
-                    state=QuestionState.NEEDS_SELLER,
+                    state=QuestionState.QUEUED,
                     reason_code="previous_listing",
                     should_process=False,
                 )
@@ -660,8 +669,11 @@ class CopilotRouter:
             canonical_key=row["canonical_key"],
             canonical_question_id=row["canonical_question_id"],
             bound_listing=bound_listing,
-            should_process=state is QuestionState.QUEUED
-            and route in {ReplyRoute.ELIGIBLE, ReplyRoute.ADVERSARIAL},
+            should_process=(
+                state is QuestionState.QUEUED
+                and route in {ReplyRoute.ELIGIBLE, ReplyRoute.ADVERSARIAL}
+                and row["reason_code"] != "previous_listing"
+            ),
             event_replay=event_replay,
         )
 
@@ -696,3 +708,16 @@ class CopilotRouter:
             binding_basis=BindingBasis(row["binding_basis"]),
             binding_status=BindingStatus(row["binding_status"]),
         )
+
+
+def _parse_utc(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("accepted_at must be timezone-aware")
+    return parsed.astimezone(timezone.utc)
+
+
+def _utc_millis(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace(
+        "+00:00", "Z"
+    )

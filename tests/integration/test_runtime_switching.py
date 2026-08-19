@@ -187,6 +187,13 @@ def test_in_flight_question_keeps_acceptance_time_selection(tmp_path: Path) -> N
             PushRequest(target_listing_id=LISTING, expected_show_version=1),
             idempotency_key="runtime-pinning-push",
         )
+        with app.state.database.transaction() as connection:
+            connection.execute(
+                """UPDATE copilot_r3_capabilities
+                   SET enabled = 0, version = version + 1
+                   WHERE seller_id = ? AND show_id = ?""",
+                (authority.seller_id, authority.show_id),
+            )
 
         pending = asyncio.create_task(
             process_customer_reply(

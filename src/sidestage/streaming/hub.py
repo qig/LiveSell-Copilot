@@ -94,12 +94,10 @@ class SseHub:
 
     def __init__(self, store: StreamEventStore) -> None:
         self.store = store
-        self._conditions: DefaultDict[str, asyncio.Condition] = defaultdict(asyncio.Condition)
+        self._wakeups: DefaultDict[str, asyncio.Event] = defaultdict(asyncio.Event)
 
     async def notify(self, show_id: str) -> None:
-        condition = self._conditions[show_id]
-        async with condition:
-            condition.notify_all()
+        self._wakeups[show_id].set()
 
     async def stream(
         self,
@@ -121,16 +119,19 @@ class SseHub:
             if once:
                 return
 
-            condition = self._conditions[show_id]
+            wakeup = self._wakeups[show_id]
+            wakeup.clear()
+            # Close the read-to-wait race without a Condition lock. A producer
+            # persists first and then sets this event. If it committed before
+            # clear(), the second read sees the durable row; if it commits
+            # after the second read, Event.wait() observes the set flag. Event
+            # also safely supports several browser listeners on Python 3.9,
+            # where wait_for(Condition.wait()) moves the wait into a child task
+            # and can violate the lock-ownership assumption during disconnects.
+            if self.store.after(show_id, cursor):
+                continue
             try:
-                async with condition:
-                    # Close the read-to-wait race: a producer commits first, then
-                    # takes this same lock to notify. If it committed before this
-                    # lock was acquired, the second read observes the event; if it
-                    # commits after, wait() registers before releasing the lock.
-                    if self.store.after(show_id, cursor):
-                        continue
-                    await asyncio.wait_for(condition.wait(), timeout=15)
+                await asyncio.wait_for(wakeup.wait(), timeout=15)
             except asyncio.TimeoutError:
                 yield ": keep-alive\n\n"
 

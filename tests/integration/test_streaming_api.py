@@ -274,6 +274,41 @@ def test_sse_listener_closes_the_commit_to_wait_race() -> None:
     assert store.calls >= 3
 
 
+def test_sse_hub_wakes_multiple_same_show_listeners_without_lock_ownership_races() -> None:
+    event = StreamEvent(
+        stream_offset=1,
+        seller_id=SELLER,
+        show_id="show_velocity_kicks",
+        event_type="chat.accepted",
+        payload={"event_id": "evt_fanout"},
+        created_at="2026-08-17T12:00:00.123Z",
+    )
+
+    class MutableStore:
+        def __init__(self) -> None:
+            self.events: tuple[StreamEvent, ...] = ()
+
+        def after(self, _show_id: str, offset: int) -> tuple[StreamEvent, ...]:
+            return tuple(item for item in self.events if item.stream_offset > offset)
+
+    store = MutableStore()
+    hub = SseHub(store)  # type: ignore[arg-type]
+
+    async def receive_all() -> list[str]:
+        streams = [hub.stream("show_velocity_kicks", after=0) for _ in range(8)]
+        listeners = [asyncio.create_task(stream.__anext__()) for stream in streams]
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        store.events = (event,)
+        await hub.notify("show_velocity_kicks")
+        return await asyncio.wait_for(asyncio.gather(*listeners), timeout=0.5)
+
+    messages = asyncio.run(receive_all())
+
+    assert len(messages) == 8
+    assert all("id: 1" in message for message in messages)
+
+
 def test_chat_snapshots_and_sse_replay_are_tenant_isolated(client: TestClient) -> None:
     velocity_token, _ = create_session(client)
     vault_token, _ = create_session(client, OTHER_SELLER)

@@ -62,7 +62,7 @@ def r3_browser_page() -> Iterator[Page]:
         browser.close()
 
 
-def test_r3_warning_persists_and_disable_immediately_restores_r2_review(
+def test_auto_message_is_default_and_toggle_switches_to_manual_review(
     r3_live_server: str,
     r3_browser_page: Page,
 ) -> None:
@@ -77,16 +77,14 @@ def test_r3_warning_persists_and_disable_immediately_restores_r2_review(
     page.on("pageerror", lambda error: browser_errors.append(str(error)))
 
     page.goto(f"{r3_live_server}/app/")
-    expect(page.locator("#r3-toggle-label")).to_have_text("Review first")
-    expect(page.locator("#r3-warning")).to_be_hidden()
-
-    page.locator("#r3-toggle").click()
-    expect(page.locator("#r3-toggle-label")).to_have_text("Auto-reply on")
+    expect(page.locator("#r3-toggle-label")).to_have_text("Auto-message")
     expect(page.locator("#r3-warning")).to_be_visible()
-    expect(page.locator("#r3-warning")).to_contain_text("Only fresh current price")
+    expect(page.locator("#r3-warning")).to_contain_text(
+        "fully grounded answer sends automatically"
+    )
 
     page.reload()
-    expect(page.locator("#r3-toggle-label")).to_have_text("Auto-reply on")
+    expect(page.locator("#r3-toggle-label")).to_have_text("Auto-message")
     expect(page.locator("#r3-warning")).to_be_visible()
 
     page.locator("#empty-push").click()
@@ -102,7 +100,7 @@ def test_r3_warning_persists_and_disable_immediately_restores_r2_review(
     )
 
     page.locator("#r3-disable").click()
-    expect(page.locator("#r3-toggle-label")).to_have_text("Review first")
+    expect(page.locator("#r3-toggle-label")).to_have_text("Manual review")
     expect(page.locator("#r3-warning")).to_be_hidden()
 
     page.locator("#chat-input").fill("What is the price right now?")
@@ -121,7 +119,7 @@ def test_r3_warning_persists_and_disable_immediately_restores_r2_review(
         {"token": token},
     )
     assert projection["r3_capability"]["enabled"] is False
-    assert projection["r3_capability"]["version"] == 3
+    assert projection["r3_capability"]["version"] == 2
     assert len(projection["outbound_replies"]) == 1
     assert projection["reply_receipts"][0]["mode"] == "r3"
     assert [item["kind"] for item in projection["chat_timeline"]] == [
@@ -134,4 +132,7 @@ def test_r3_warning_persists_and_disable_immediately_restores_r2_review(
         "customer_display_name": "demo_tester",
         "text": "How much is this pair?",
     }
+    visible_text = page.locator("body").inner_text()
+    assert "R2" not in visible_text
+    assert "R3" not in visible_text
     assert not browser_errors

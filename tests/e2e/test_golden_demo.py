@@ -206,6 +206,8 @@ def test_golden_demo_proves_review_auto_research_race_and_debugger(
             page.on("pageerror", lambda error: browser_errors.append(str(error)))
 
             page.goto(f"{base_url}/app/")
+            page.locator("#r3-toggle").click()
+            expect(page.locator("#r3-toggle-label")).to_have_text("Manual review")
             page.locator("#empty-push").click()
             page.locator("#dialog-confirm").click()
             expect(page.locator("#operation-dialog")).to_be_hidden()
@@ -231,7 +233,7 @@ def test_golden_demo_proves_review_auto_research_race_and_debugger(
             )
 
             page.locator("#r3-toggle").click()
-            expect(page.locator("#r3-toggle-label")).to_have_text("Auto-reply on")
+            expect(page.locator("#r3-toggle-label")).to_have_text("Auto-message")
             expect(page.locator("#r3-warning")).to_be_visible()
 
             auto_question = "What is the price right now?"
@@ -245,6 +247,9 @@ def test_golden_demo_proves_review_auto_research_race_and_debugger(
                 "It's $160 right now."
             )
 
+            page.locator("#r3-toggle").click()
+            expect(page.locator("#r3-toggle-label")).to_have_text("Manual review")
+
             research_question = "When did the Aero Dash release?"
             _submit_chat(page, research_question)
             research_card = _card(page, research_question)
@@ -257,6 +262,8 @@ def test_golden_demo_proves_review_auto_research_race_and_debugger(
             _submit_chat(page, injection_question)
             expect(_card(page, injection_question)).to_have_count(0)
 
+            page.locator("#r3-toggle").click()
+            expect(page.locator("#r3-toggle-label")).to_have_text("Auto-message")
             race_question = "Could you tell me the current price for the Aero Dash?"
             _submit_chat(page, race_question)
             race_card = _card(page, race_question)

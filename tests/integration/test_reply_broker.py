@@ -46,6 +46,13 @@ def broker_runtime(tmp_path: Path):
     catalog = load_seller_fixture()
     database = MarketplaceDatabase(tmp_path / "sidestage.sqlite3")
     database.initialize(catalog, evidence_imported_at="2026-08-17T11:00:00.000Z")
+    with database.transaction() as connection:
+        connection.execute(
+            """UPDATE copilot_r3_capabilities
+               SET enabled = 0, version = version + 1
+               WHERE seller_id = ? AND show_id = ?""",
+            (SELLER, SHOW),
+        )
     marketplace = MarketplaceService(database)
     authority = SellerAuthority(
         seller_id=SELLER,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -195,6 +195,28 @@ def test_normalization_duplicates_group_within_epoch_but_paraphrases_do_not(runt
         assert connection.execute("SELECT COUNT(*) FROM copilot_questions").fetchone()[0] == 3
 
 
+def test_normalized_text_is_grouped_only_inside_the_five_second_window(runtime) -> None:
+    _database, _marketplace, authority, ingestor, router = runtime
+
+    first_event = _ingest(ingestor, authority, "Is US 9 available?")
+    within_event = _ingest(ingestor, authority, "IS US 9 AVAILABLE?!").model_copy(
+        update={"accepted_at": (FIXED_TIME + timedelta(seconds=4)).isoformat()}
+    )
+    later_event = _ingest(ingestor, authority, "Is US 9 available?").model_copy(
+        update={"accepted_at": (FIXED_TIME + timedelta(seconds=10)).isoformat()}
+    )
+
+    first = router.route(first_event)
+    within = router.route(within_event)
+    later = router.route(later_event)
+
+    assert first.route is ReplyRoute.ELIGIBLE
+    assert within.route is ReplyRoute.DUPLICATE
+    assert within.canonical_question_id == first.question_id
+    assert later.route is ReplyRoute.ELIGIBLE
+    assert later.canonical_question_id is None
+
+
 def test_question_before_swap_stays_bound_to_previous_listing_and_skips_work(runtime) -> None:
     _database, marketplace, authority, ingestor, router = runtime
     before_swap = _ingest(ingestor, authority, "How much is this pair?")
@@ -211,7 +233,7 @@ def test_question_before_swap_stays_bound_to_previous_listing_and_skips_work(run
     decision = router.route(before_swap)
 
     assert decision.route is ReplyRoute.ELIGIBLE
-    assert decision.state is QuestionState.NEEDS_SELLER
+    assert decision.state is QuestionState.QUEUED
     assert decision.reason_code == "previous_listing"
     assert decision.bound_listing is not None
     assert decision.bound_listing.listing_id == AERO

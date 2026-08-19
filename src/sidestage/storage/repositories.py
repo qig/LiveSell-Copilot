@@ -146,9 +146,10 @@ CREATE TABLE IF NOT EXISTS copilot_questions (
     asked_at TEXT NOT NULL,
     state_changed_at TEXT NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS one_canonical_question_per_scope
-    ON copilot_questions(seller_id, show_id, canonical_scope, canonical_key)
-    WHERE canonical_question_id IS NULL AND route != 'noise';
+CREATE INDEX IF NOT EXISTS canonical_question_dedup_lookup
+    ON copilot_questions(
+        seller_id, show_id, canonical_scope, canonical_key, asked_at
+    ) WHERE canonical_question_id IS NULL AND route != 'noise';
 CREATE INDEX IF NOT EXISTS copilot_questions_by_show
     ON copilot_questions(show_id, question_number);
 CREATE TABLE IF NOT EXISTS copilot_question_transitions (
@@ -247,7 +248,7 @@ CREATE TABLE IF NOT EXISTS copilot_suggestions (
 CREATE TABLE IF NOT EXISTS copilot_r3_capabilities (
     show_id TEXT PRIMARY KEY REFERENCES shows(show_id),
     seller_id TEXT NOT NULL REFERENCES sellers(seller_id),
-    enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
     version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
     updated_by TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -306,6 +307,18 @@ CREATE TABLE IF NOT EXISTS copilot_reply_idempotency (
 
 def initialize_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(SCHEMA)
+    connection.execute("DROP INDEX IF EXISTS one_canonical_question_per_scope")
+    connection.execute(
+        """CREATE INDEX IF NOT EXISTS canonical_question_dedup_lookup
+           ON copilot_questions(
+               seller_id, show_id, canonical_scope, canonical_key, asked_at
+           ) WHERE canonical_question_id IS NULL AND route != 'noise'"""
+    )
+    connection.execute(
+        """UPDATE copilot_r3_capabilities
+           SET enabled = 1, version = version + 1
+           WHERE enabled = 0 AND updated_by = 'system_default'"""
+    )
     _ensure_column(
         connection,
         "copilot_reply_receipts",
@@ -373,7 +386,7 @@ def seed_catalog(connection: sqlite3.Connection, catalog: SellerCatalog) -> None
             connection.execute(
                 """INSERT OR IGNORE INTO copilot_r3_capabilities(
                        show_id, seller_id, enabled, version, updated_by, updated_at
-                   ) VALUES (?, ?, 0, 1, 'system_default', '1970-01-01T00:00:00.000Z')""",
+                   ) VALUES (?, ?, 1, 1, 'system_default', '1970-01-01T00:00:00.000Z')""",
                 (show_id, seller.seller_id),
             )
         return
@@ -393,7 +406,7 @@ def seed_catalog(connection: sqlite3.Connection, catalog: SellerCatalog) -> None
         connection.execute(
             """INSERT INTO copilot_r3_capabilities(
                    show_id, seller_id, enabled, version, updated_by, updated_at
-               ) VALUES (?, ?, 0, 1, 'system_default', '1970-01-01T00:00:00.000Z')""",
+               ) VALUES (?, ?, 1, 1, 'system_default', '1970-01-01T00:00:00.000Z')""",
             (show_id, seller.seller_id),
         )
         for product in seller.products:

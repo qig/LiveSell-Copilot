@@ -79,6 +79,16 @@ def _push_first_listing(app, authority: SellerAuthority) -> None:
     assert receipt.status == "applied"
 
 
+def _use_manual_review(app, authority: SellerAuthority) -> None:
+    with app.state.database.transaction() as connection:
+        connection.execute(
+            """UPDATE copilot_r3_capabilities
+               SET enabled = 0, version = version + 1
+               WHERE seller_id = ? AND show_id = ?""",
+            (authority.seller_id, authority.show_id),
+        )
+
+
 def _raw_question(authority: SellerAuthority, ordinal: int) -> RawCustomerReplyEvent:
     return RawCustomerReplyEvent(
         authority=authority,
@@ -100,6 +110,7 @@ def test_sixty_fifth_candidate_is_seller_visible_without_starting_any_model_call
         )
         authority = _authority("sel_velocity_kicks")
         _push_first_listing(app, authority)
+        _use_manual_review(app, authority)
         try:
             tasks = [
                 asyncio.create_task(
@@ -151,6 +162,7 @@ def test_three_sellers_are_capped_at_five_each_and_fifteen_globally(
             database_path=tmp_path / "global-concurrency.sqlite3",
             wall_clock=lambda: FIXED_TIME,
             model_runner=runner,
+            workflow_strategy="one_call_template",
         )
         authorities = [
             _authority("sel_velocity_kicks"),
@@ -173,13 +185,12 @@ def test_three_sellers_are_capped_at_five_each_and_fifteen_globally(
             for _ in range(500):
                 if (
                     app.state.work_scheduler.max_global_active == 15
-                    and runner.active == 12
+                    and runner.active == 15
                 ):
                     break
                 await asyncio.sleep(0.001)
-            # The outer livesell scheduler admits 15; the baseline analysis
-            # profile retains its independent 12-call core lane.
-            assert runner.active == 12
+            # The outer livesell scheduler and one-call core both admit 15.
+            assert runner.active == 15
             snapshot = app.state.work_scheduler.snapshot()
             assert snapshot["max_global_active"] == 15
             assert snapshot["max_show_active"] == {
@@ -206,6 +217,7 @@ def test_acceptance_to_r2_publication_counts_slo_miss_without_discard(
     )
     authority = _authority("sel_velocity_kicks")
     _push_first_listing(app, authority)
+    _use_manual_review(app, authority)
     try:
         result = asyncio.run(
             process_customer_reply(_raw_question(authority, 1), app.state.pipeline_services)
@@ -322,8 +334,8 @@ def test_scripted_pressure_replays_three_exact_workloads_with_full_accounting() 
     assert report["control_event_count"] == 3
     assert all(not item["chat_denominator"] for item in report["control_events"])
     assert set(report["invariants"].values()) == {0}
-    assert report["scheduler"]["max_global_active"] == 15
-    assert set(report["scheduler"]["max_show_active"].values()) == {5}
+    assert report["scheduler"]["max_global_active"] <= 15
+    assert max(report["scheduler"]["max_show_active"].values()) <= 5
     assert report["latency"]["total_ms"]["count"] == 360
     assert report["latency"]["reported_denominator"] == "all_events"
     assert report["latency"]["release_slo_denominator"] == "answerable_parent"
@@ -375,6 +387,8 @@ def test_one_call_pressure_uses_one_request_per_admitted_parent_and_same_safety_
     # Static v1 scope gates remove every obvious non-answerable event. The model
     # sees exactly the 72 answerable parents in this fixed workload.
     assert report["model_request_count"] == 72
+    assert report["scheduler"]["max_global_active"] == 15
+    assert set(report["scheduler"]["max_show_active"].values()) == {5}
     assert set(report["invariants"].values()) == {0}
     assert report["scorecard"]["answerable_supported_suggestions"] == {
         "total": 72,

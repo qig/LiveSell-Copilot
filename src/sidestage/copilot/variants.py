@@ -25,6 +25,7 @@ class Audience(str, Enum):
 
 class VariantResolutionStatus(str, Enum):
     EXACT = "exact"
+    ABSENT = "absent"
     AMBIGUOUS = "ambiguous"
     MISSING_EVIDENCE = "missing_evidence"
     SUMMARY = "summary"
@@ -159,10 +160,45 @@ def resolve_variant_question(
             return VariantResolution(
                 status=VariantResolutionStatus.EXACT,
                 candidate=matches[0],
-                size_system=attributes.size_system,
-                audience=attributes.audience,
+                size_system=matches[0].size_system,
+                audience=matches[0].audience,
                 size=attributes.size,
             )
+        if not matches:
+            compatible = tuple(
+                candidate
+                for candidate in candidates
+                if (
+                    attributes.size_system is None
+                    or candidate.size_system is attributes.size_system
+                )
+                and (
+                    attributes.audience is None
+                    or candidate.audience is attributes.audience
+                )
+            )
+            systems = {candidate.size_system for candidate in compatible}
+            audiences = {candidate.audience for candidate in compatible}
+            resolved_system = attributes.size_system or (
+                next(iter(systems)) if len(systems) == 1 else None
+            )
+            resolved_audience = attributes.audience or (
+                next(iter(audiences)) if len(audiences) == 1 else None
+            )
+            if resolved_system is not None and resolved_audience is not None:
+                return VariantResolution(
+                    status=VariantResolutionStatus.ABSENT,
+                    size_system=resolved_system,
+                    audience=resolved_audience,
+                    size=attributes.size,
+                )
+            if compatible and (len(systems) > 1 or len(audiences) > 1):
+                return VariantResolution(
+                    status=VariantResolutionStatus.AMBIGUOUS,
+                    size_system=resolved_system,
+                    audience=resolved_audience,
+                    size=attributes.size,
+                )
         return VariantResolution(
             status=(
                 VariantResolutionStatus.MISSING_EVIDENCE
@@ -192,7 +228,9 @@ def _parse_buyer_attributes(question: str) -> _BuyerAttributes:
     audiences = _matches(text, _AUDIENCE_PATTERNS)
     explicit_size_context = bool(_SIZE_WORD.search(text) or systems)
     sizes = _sizes(text) if explicit_size_context else _audience_linked_sizes(text)
-    has_size_context = bool(explicit_size_context or sizes)
+    has_size_context = bool(
+        explicit_size_context or sizes or _has_audience_linked_number(text)
+    )
     conflicting = len(systems) > 1 or len(audiences) > 1 or len(sizes) > 1
     return _BuyerAttributes(
         size_system=systems[0] if len(systems) == 1 else None,
@@ -240,10 +278,29 @@ def _audience_linked_sizes(text: str) -> tuple[Decimal, ...]:
                 value = Decimal(number_match.group("size"))
             except InvalidOperation:
                 continue
-            if value not in linked_values:
+            if Decimal("1") <= value <= Decimal("60") and value not in linked_values:
                 linked_values.append(value)
             break
     return tuple(linked_values)
+
+
+def _has_audience_linked_number(text: str) -> bool:
+    audience_matches = [
+        match
+        for pattern in _AUDIENCE_PATTERNS.values()
+        for match in pattern.finditer(text)
+    ]
+    for number_match in _SIZE_NUMBER.finditer(text):
+        for audience_match in audience_matches:
+            if number_match.end() <= audience_match.start():
+                between = text[number_match.end() : audience_match.start()]
+            elif audience_match.end() <= number_match.start():
+                between = text[audience_match.end() : number_match.start()]
+            else:
+                continue
+            if re.fullmatch(r"\s*(?:for\s+)?", between, re.IGNORECASE) is not None:
+                return True
+    return False
 
 
 def _summary_kind(question: str) -> Optional[AvailabilitySummaryKind]:

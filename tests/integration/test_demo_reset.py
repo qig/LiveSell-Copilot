@@ -144,7 +144,7 @@ def test_full_reset_restores_fixture_state_and_preserves_other_seller(
         assert snapshot["copilot_questions"] == []
         assert snapshot["outbound_replies"] == []
         assert snapshot["reply_receipts"] == []
-        assert snapshot["r3_capability"]["enabled"] is False
+        assert snapshot["r3_capability"]["enabled"] is True
         assert listing["price_cents"] == 16000
         assert listing["status"] == "available"
         assert variant["available_quantity"] == 4

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -291,10 +293,36 @@ def create_app(
         runtime_selector=runtime_selector,
     )
 
+    @asynccontextmanager
+    async def lifespan(_application: FastAPI):
+        try:
+            yield
+        finally:
+            first_close_error: Optional[Exception] = None
+            seen_runners: set[int] = set()
+            for registered_runner in runtime_catalog.runners:
+                close = getattr(registered_runner, "aclose", None)
+                if close is None or id(registered_runner) in seen_runners:
+                    continue
+                seen_runners.add(id(registered_runner))
+                try:
+                    close_result = close()
+                    if inspect.isawaitable(close_result):
+                        await close_result
+                except Exception as error:
+                    if first_close_error is None:
+                        first_close_error = error
+            try:
+                trace_sink.close()
+            finally:
+                if first_close_error is not None:
+                    raise first_close_error
+
     application = FastAPI(
         title="SideStage M3B",
         version="0.3.5",
         description="Synthetic live-selling copilot with a closed registered agent workflow",
+        lifespan=lifespan,
     )
     application.state.database = database
     application.state.marketplace = marketplace
@@ -319,7 +347,6 @@ def create_app(
     application.state.runtime_catalog = runtime_catalog
     application.state.runtime_selector = runtime_selector
     application.state.trace_sink = trace_sink
-    application.add_event_handler("shutdown", trace_sink.close)
 
     @application.get("/api/sellers")
     def list_sellers() -> dict:
@@ -900,12 +927,6 @@ def create_live_app(
             else None
         ),
     }
-    seen_runners: set[int] = set()
-    for registered_runner in application.state.runtime_catalog.runners:
-        close = getattr(registered_runner, "aclose", None)
-        if close is not None and id(registered_runner) not in seen_runners:
-            seen_runners.add(id(registered_runner))
-            application.add_event_handler("shutdown", close)
     return application
 
 

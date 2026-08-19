@@ -399,6 +399,110 @@ async def process_customer_reply(
         artifact_kind="routing_decision",
         payload=routing.model_dump(mode="json"),
     )
+    if routing.reason_code == "previous_listing":
+        span.completed(
+            output_ref=f"route:{routing.route.value}",
+            verdict="previous_listing_notice",
+            reason_code=routing.reason_code,
+        )
+        for skipped_stage in (
+            TraceStage.LLM_ANALYSIS,
+            TraceStage.EVIDENCE_RETRIEVAL,
+            TraceStage.REPLY_AGENT,
+        ):
+            services.trace_recorder.skip(
+                skipped_stage,
+                **context,
+                reason_code="previous_listing_notice",
+                verdict="skipped",
+            )
+        broker_span = services.trace_recorder.start(
+            TraceStage.BROKER_GUARDRAILS,
+            **context,
+            input_ref=routing.question_id,
+        )
+        try:
+            snapshot, broker_decision = services.broker.evaluate_previous_listing_notice(
+                routing,
+                seller_id=event.seller_id,
+                show_id=event.show_id,
+                observed_at=services.wall_clock(),
+            )
+        except Exception:
+            broker_span.failed(
+                reason_code="previous_listing_notice_unavailable",
+                verdict="failed",
+            )
+            publication, persistence_failed = await publish_terminal(
+                routing,
+                "previous_listing_notice_unavailable",
+            )
+            return finalize(PipelineResult(
+                trace_id=trace_id,
+                status=PipelineStatus.FAILED,
+                event_id=event.event_id,
+                question_id=routing.question_id,
+                reason_code=(
+                    "result_persistence_failed"
+                    if persistence_failed
+                    else "previous_listing_notice_unavailable"
+                ),
+                publication=publication,
+            ))
+        context["snapshot_id"] = snapshot.snapshot_id
+        services.trace_recorder.artifact(
+            TraceStage.BROKER_GUARDRAILS,
+            trace_id=trace_id,
+            artifact_kind="broker_decision",
+            payload=broker_decision.model_dump(mode="json"),
+        )
+        broker_span.completed(
+            output_ref=f"broker:{broker_decision.outcome.value}",
+            verdict=broker_decision.outcome.value,
+            reason_code=broker_decision.reason_code,
+        )
+        result_span = services.trace_recorder.start(
+            TraceStage.RESULT,
+            **context,
+            input_ref=f"broker:{broker_decision.outcome.value}",
+        )
+        try:
+            publication = await services.result_handler.handle(
+                event,
+                routing,
+                snapshot,
+                broker_decision,
+            )
+        except Exception:
+            result_span.failed(reason_code="result_persistence_failed", verdict="failed")
+            return finalize(PipelineResult(
+                trace_id=trace_id,
+                status=PipelineStatus.FAILED,
+                event_id=event.event_id,
+                question_id=routing.question_id,
+                reason_code="result_persistence_failed",
+                broker_decision=broker_decision,
+            ))
+        result_span.completed(
+            output_ref=routing.question_id,
+            verdict="published",
+            reason_code=broker_decision.reason_code,
+        )
+        services.trace_recorder.artifact(
+            TraceStage.RESULT,
+            trace_id=trace_id,
+            artifact_kind="publication",
+            payload=publication,
+        )
+        return finalize(PipelineResult(
+            trace_id=trace_id,
+            status=PipelineStatus.COMPLETED,
+            event_id=event.event_id,
+            question_id=routing.question_id,
+            reason_code=broker_decision.reason_code,
+            broker_decision=broker_decision,
+            publication=publication,
+        ))
     if not routing.should_process:
         span.exited(
             output_ref=f"route:{routing.route.value}",

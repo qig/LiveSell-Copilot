@@ -18,6 +18,7 @@ from sidestage.copilot.contracts import EvidenceRecord, EvidenceSnapshot
 from sidestage.copilot.profile import LivesellIntentError, decode_livesell_intent
 from sidestage.copilot.retrieval import EvidenceRetriever, RetrievalStatus
 from sidestage.copilot.routing import RoutingDecision
+from sidestage.copilot.variants import Audience, SizeSystem, parse_trusted_variant
 from sidestage.domain.replies import (
     AbstainIntent,
     AbstentionReason,
@@ -58,36 +59,6 @@ _NO_RESPONSE_ABSTENTIONS = {
     AbstentionReason.NO_RESPONSE_NEEDED,
     AbstentionReason.PROMPT_INJECTION,
 }
-_R3_POLICY_QUESTIONS = {
-    AnswerCategory.SHIPPING: frozenset(
-        {
-            "what is your shipping policy",
-            "whats your shipping policy",
-            "how does shipping work",
-            "when do you ship",
-            "how fast do you ship",
-        }
-    ),
-    AnswerCategory.PAYMENT: frozenset(
-        {
-            "what is your payment policy",
-            "whats your payment policy",
-            "how does payment work",
-            "when is payment captured",
-        }
-    ),
-    AnswerCategory.RETURNS: frozenset(
-        {
-            "what is your return policy",
-            "whats your return policy",
-            "what is your returns policy",
-            "can i return this",
-            "are returns allowed",
-        }
-    ),
-}
-
-
 class ReplyEffectBroker:
     """Recompute support and freshness; never trust model authorization labels."""
 
@@ -148,6 +119,98 @@ class ReplyEffectBroker:
                 "template_id": rendered.template_id,
                 "template_version": rendered.template_version,
             }
+        )
+
+    def evaluate_previous_listing_notice(
+        self,
+        routing: RoutingDecision,
+        *,
+        seller_id: str,
+        show_id: str,
+        observed_at: datetime,
+    ) -> tuple[EvidenceSnapshot, BrokerDecision]:
+        """Build a current-stage notice without retargeting the buyer's old question."""
+
+        if routing.bound_listing is None or routing.reason_code != "previous_listing":
+            raise ValueError("previous-listing notice requires an immutable old binding")
+        with self.database.read() as connection:
+            active = connection.execute(
+                """SELECT e.epoch_id, e.listing_id
+                   FROM listing_epochs e
+                   JOIN listings l ON l.listing_id = e.listing_id
+                   WHERE e.seller_id = ? AND e.show_id = ? AND e.end_seq IS NULL
+                     AND l.seller_id = ?""",
+                (seller_id, show_id, seller_id),
+            ).fetchone()
+            if active is None or active["epoch_id"] == routing.bound_listing.epoch_id:
+                raise LookupError("a distinct trusted current listing is unavailable")
+            evidence_row = connection.execute(
+                """SELECT * FROM copilot_evidence_records
+                   WHERE seller_id = ? AND listing_id = ? AND fact_type = ?""",
+                (seller_id, active["listing_id"], FactType.LISTING_IDENTITY.value),
+            ).fetchone()
+            capability = connection.execute(
+                """SELECT enabled, version FROM copilot_r3_capabilities
+                   WHERE seller_id = ? AND show_id = ?""",
+                (seller_id, show_id),
+            ).fetchone()
+        if evidence_row is None:
+            raise LookupError("trusted current listing identity is unavailable")
+        product = next(
+            (
+                item
+                for item in self.catalog.seller(seller_id).products
+                if item.listing.listing_id == active["listing_id"]
+            ),
+            None,
+        )
+        if product is None:
+            raise LookupError("current listing is outside the trusted seller catalog")
+        record = self.retriever._record_from_row(evidence_row)
+        snapshot = EvidenceSnapshot(
+            snapshot_id=f"snp_{uuid4().hex}",
+            seller_id=seller_id,
+            show_id=show_id,
+            listing_id=active["listing_id"],
+            epoch_id=active["epoch_id"],
+            created_at=observed_at,
+            records=(record,),
+        )
+        reply_text = (
+            f"We're showing {product.listing.title} right now—the item you asked about "
+            "is no longer on stage."
+        )
+        if capability is None or not bool(capability["enabled"]):
+            return snapshot, BrokerDecision(
+                outcome=BrokerOutcome.REVIEW,
+                reason_code="previous_listing_notice_review",
+                reply_text=reply_text,
+                evidence_ids=(record.evidence_id,),
+                validated_category=AnswerCategory.PRODUCT_RESEARCH,
+            )
+        authorization = R3Authorization(
+            capability_version=int(capability["version"]),
+            seller_id=seller_id,
+            show_id=show_id,
+            listing_id=active["listing_id"],
+            sku=product.sku,
+            epoch_id=active["epoch_id"],
+            answer_category=AnswerCategory.PRODUCT_RESEARCH,
+            fact=R3ValidatedFact(
+                evidence_id=record.evidence_id,
+                fact_type=record.fact_type,
+                value=record.value,
+                source_ref=record.source_ref,
+                source_version=record.source_version,
+            ),
+        )
+        return snapshot, BrokerDecision(
+            outcome=BrokerOutcome.AUTO_SEND,
+            reason_code="previous_listing_notice_authorized",
+            reply_text=reply_text,
+            evidence_ids=(record.evidence_id,),
+            validated_category=AnswerCategory.PRODUCT_RESEARCH,
+            r3_authorization=authorization,
         )
 
     def evaluate_intent(
@@ -258,10 +321,6 @@ class ReplyEffectBroker:
         if len(factual) != 1:
             return None
         record = factual[0]
-        if record.fact_type is FactType.AVAILABILITY_SUMMARY:
-            return None
-        if not _r3_question_matches(routing.normalized_text, category, record):
-            return None
         rendered = _render_r3_reply(category, record, voice)
         if rendered is None or len(rendered) > max_reply_chars:
             return None
@@ -422,32 +481,13 @@ def _price_supported(span: str, value: str) -> bool:
     return False
 
 
-def _r3_question_matches(
-    normalized_text: str,
-    category: AnswerCategory,
-    record: EvidenceRecord,
-) -> bool:
-    normalized = " ".join(normalized_text.casefold().split())
-    if category is AnswerCategory.PRICE:
-        if any(term in normalized for term in ("offer", "discount", "markdown", "cheaper")):
-            return False
-        return any(term in normalized for term in ("how much", "price", "cost"))
-    if category is AnswerCategory.AVAILABILITY:
-        label = record.value.partition(":")[0].casefold()
-        label_tokens = re.findall(r"[a-z0-9]+", label)
-        return all(token in normalized for token in label_tokens) and any(
-            term in normalized
-            for term in ("available", "have", "in stock", "left", "sold out")
-        )
-    allowed = _R3_POLICY_QUESTIONS.get(category)
-    return allowed is not None and normalized in allowed
-
-
 def _render_r3_reply(
     category: AnswerCategory,
     record: EvidenceRecord,
     voice: str,
 ) -> Optional[str]:
+    if record.fact_type is FactType.AVAILABILITY_SUMMARY:
+        return record.value
     if category is AnswerCategory.PRICE:
         match = re.search(r"(\d+)(?:\.(\d{2}))?", record.value)
         if match is None:
@@ -472,13 +512,7 @@ def _render_r3_reply(
             "precise_reserved": f"{label} is available; {count} remain.",
             "fast_direct": f"{label}: {count} available.",
         }.get(voice)
-    if category in {
-        AnswerCategory.SHIPPING,
-        AnswerCategory.PAYMENT,
-        AnswerCategory.RETURNS,
-    }:
-        return record.value
-    return None
+    return record.value
 
 
 class ReplyPersistenceError(RuntimeError):
@@ -520,6 +554,7 @@ class R2ResultHandler:
     ) -> None:
         self.database = database
         self.catalog = catalog
+        self.retriever = EvidenceRetriever(database, catalog)
         self.stream_store = stream_store
         self.hub = hub
         self.wall_clock = wall_clock
@@ -856,6 +891,51 @@ class R2ResultHandler:
             ):
                 return "r3_fact_version_changed", {}
             validated_versions["listing_version"] = int(listing["version"])
+        elif fact.fact_type is FactType.VARIANT_AVAILABILITY and fact.source_ref.startswith(
+            "sqlite:inventory_absence/"
+        ):
+            try:
+                encoded = fact.source_ref.removeprefix("sqlite:inventory_absence/")
+                system_text, audience_text, size_text = encoded.split("/")
+                system = SizeSystem(system_text)
+                audience = Audience(audience_text)
+                size = Decimal(size_text)
+            except (ValueError, InvalidOperation):
+                return "r3_fact_version_changed", {}
+            show = connection.execute(
+                "SELECT show_seq FROM shows WHERE seller_id = ? AND show_id = ?",
+                (event.seller_id, event.show_id),
+            ).fetchone()
+            rows = connection.execute(
+                """SELECT variant_id FROM inventory
+                   WHERE seller_id = ? AND listing_id = ?""",
+                (event.seller_id, authorization.listing_id),
+            ).fetchall()
+            complete_inventory = {row["variant_id"] for row in rows} == {
+                item.variant_id for item in product.variants
+            }
+            candidates = tuple(parse_trusted_variant(item) for item in product.variants)
+            now_exists = any(
+                candidate.size_system is system
+                and candidate.audience is audience
+                and candidate.size == size
+                for candidate in candidates
+            )
+            audience_label = {
+                Audience.MEN: "M",
+                Audience.WOMEN: "W",
+                Audience.YOUTH: "Y",
+            }[audience]
+            expected_value = f"{system.value} {audience_label} {format(size, 'f')}: 0 available"
+            if (
+                show is None
+                or int(show["show_seq"]) != fact.source_version
+                or not complete_inventory
+                or now_exists
+                or fact.value != expected_value
+            ):
+                return "r3_fact_version_changed", {}
+            validated_versions["inventory_summary_version"] = int(show["show_seq"])
         elif fact.fact_type is FactType.VARIANT_AVAILABILITY:
             variant_id = fact.source_ref.rsplit("/", 1)[-1]
             variant = connection.execute(
@@ -880,6 +960,24 @@ class R2ResultHandler:
                 return "r3_fact_version_changed", {}
             validated_versions["variant_id"] = variant_id
             validated_versions["inventory_version"] = int(variant["version"])
+        elif fact.fact_type is FactType.AVAILABILITY_SUMMARY:
+            show = connection.execute(
+                "SELECT show_seq FROM shows WHERE seller_id = ? AND show_id = ?",
+                (event.seller_id, event.show_id),
+            ).fetchone()
+            expected_value = self.retriever._availability_summary_value(
+                connection,
+                seller_id=event.seller_id,
+                listing_id=authorization.listing_id,
+            )
+            if (
+                show is None
+                or int(show["show_seq"]) != fact.source_version
+                or not isinstance(expected_value, str)
+                or expected_value != fact.value
+            ):
+                return "r3_fact_version_changed", {}
+            validated_versions["inventory_summary_version"] = int(show["show_seq"])
         else:
             policy = connection.execute(
                 """SELECT value, source_version FROM copilot_evidence_records
@@ -898,7 +996,17 @@ class R2ResultHandler:
                 or policy["value"] != fact.value
             ):
                 return "r3_fact_version_changed", {}
-            validated_versions["policy_version"] = int(policy["source_version"])
+            version_field = (
+                "policy_version"
+                if fact.fact_type
+                in {
+                    FactType.SHIPPING_POLICY,
+                    FactType.PAYMENT_POLICY,
+                    FactType.RETURNS_POLICY,
+                }
+                else "evidence_version"
+            )
+            validated_versions[version_field] = int(policy["source_version"])
         return None, validated_versions
 
     async def handle_failure(self, event, routing, reason_code: str) -> dict:

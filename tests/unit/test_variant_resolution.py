@@ -115,7 +115,46 @@ def test_missing_attributes_are_ambiguous_when_trusted_candidates_disagree(
     assert result.candidate is None
 
 
-@pytest.mark.parametrize("size", ("0", "11", "99", "100"))
+def test_exact_absent_decimal_size_is_a_typed_negative_fact() -> None:
+    result = resolve_variant_question(
+        "Is US M 6.5 available?",
+        (
+            _variant("var_us_m_8", "US M 8"),
+            MEN_9,
+            _variant("var_us_m_10", "US M 10"),
+        ),
+    )
+
+    assert result.status is VariantResolutionStatus.ABSENT
+    assert result.size_system is SizeSystem.US
+    assert result.audience is Audience.MEN
+    assert result.size == Decimal("6.5")
+    assert result.variant_id is None
+
+
+def test_absent_size_infers_attributes_only_when_the_catalog_agrees() -> None:
+    inferred = resolve_variant_question(
+        "Is size 6.5 available?",
+        (
+            _variant("var_us_m_8", "US M 8"),
+            MEN_9,
+        ),
+    )
+    mixed = resolve_variant_question(
+        "Is size 6.5 available?",
+        (
+            _variant("var_us_m_8", "US M 8"),
+            _variant("var_us_w_8", "US W 8"),
+        ),
+    )
+
+    assert inferred.status is VariantResolutionStatus.ABSENT
+    assert inferred.size_system is SizeSystem.US
+    assert inferred.audience is Audience.MEN
+    assert mixed.status is VariantResolutionStatus.AMBIGUOUS
+
+
+@pytest.mark.parametrize("size", ("0", "99", "100"))
 def test_unknown_size_fails_closed_as_missing_evidence(size: str) -> None:
     result = resolve_variant_question(f"Do you have US men's size {size}?", (MEN_9,))
 

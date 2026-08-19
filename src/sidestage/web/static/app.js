@@ -69,6 +69,8 @@
       r3ToggleLabel: document.querySelector("#r3-toggle-label"),
       r3Warning: document.querySelector("#r3-warning"),
       r3Disable: document.querySelector("#r3-disable"),
+      showDeskTitle: document.querySelector("#show-desk-title"),
+      copilotAssurance: document.querySelector("#copilot-assurance"),
       runtimeBadge: document.querySelector("#runtime-badge"),
       runtimeWorkflow: document.querySelector("#runtime-workflow"),
       runtimeModel: document.querySelector("#runtime-model"),
@@ -478,7 +480,7 @@
         item.innerHTML = `
           <span class="chat-index">↳</span>
           <div class="chat-body">
-            <div class="chat-meta"><strong class="chat-customer">Seller reply</strong><span class="chat-origin chat-origin--seller">${escapeHtml(event.mode || "seller")}</span></div>
+            <div class="chat-meta"><strong class="chat-customer">Seller reply</strong><span class="chat-origin chat-origin--seller">${escapeHtml(event.mode === "r3" ? "Auto-message" : "Manual review")}</span></div>
             <blockquote class="chat-reply-quote"><strong>${escapeHtml(event.quote.customer_display_name)}</strong><span aria-hidden="true"> · </span><span>${escapeHtml(event.quote.text)}</span></blockquote>
             <p class="chat-text">${escapeHtml(event.text)}</p>
           </div>
@@ -632,14 +634,20 @@
   function renderR3Capability() {
     const capability = snapshot.r3_capability;
     const enabled = Boolean(capability?.enabled);
-    dom.r3ToggleLabel.textContent = enabled ? "Auto-reply on" : "Review first";
-    dom.r3Toggle.querySelector(".status-suffix").textContent = enabled ? "R3" : "R2";
+    dom.r3ToggleLabel.textContent = enabled ? "Auto-message" : "Manual review";
+    dom.r3Toggle.querySelector(".status-suffix").textContent = "On";
     dom.r3Toggle.classList.toggle("is-enabled", enabled);
     dom.r3Toggle.setAttribute("aria-pressed", String(enabled));
-    dom.r3Toggle.title = enabled ? "Disable bounded auto-reply" : "Enable bounded auto-reply";
+    dom.r3Toggle.title = enabled ? "Switch to Manual review" : "Switch to Auto-message";
     dom.r3Toggle.disabled = resetPending || sellerSwitchPending;
     dom.r3Disable.disabled = resetPending || sellerSwitchPending;
     dom.r3Warning.hidden = !enabled;
+    dom.showDeskTitle.textContent = enabled
+      ? "Grounded answers can send automatically."
+      : "Review before sending.";
+    dom.copilotAssurance.textContent = enabled
+      ? "Fully grounded answers send automatically. Questions needing judgment remain here for manual review."
+      : "Manual review is on. Accept, edit, or answer in your own words.";
   }
 
   async function toggleR3(options = {}) {
@@ -662,10 +670,10 @@
       snapshot = response.snapshot;
       renderAll();
       showNotice(
-        enabled ? "Bounded auto-reply enabled" : "Auto-reply disabled",
+        enabled ? "Auto-message enabled" : "Manual review enabled",
         enabled
-          ? "Only the five version-checked R3 fact categories may send without review."
-          : "All new replies now require seller review.",
+          ? "Fully grounded replies send automatically; unresolved cases remain for review."
+          : "All safe replies now wait for your review.",
       );
     } catch (error) {
       showNotice("Automation setting unchanged", error.message, {error: true});
